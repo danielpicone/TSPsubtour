@@ -23,16 +23,16 @@ end
 distances = get_distance(positions)
 
 global n = size(positions)[1]
-tsptw = JuMP.Model(solver = CplexSolver())
+tspst = JuMP.Model(solver = CplexSolver())
 
 # Add edge variables
-@variable(tsptw, edge[i=1:n,j=i+1:n], Bin)
-@variable(tsptw, vertex[i=1:n], Bin)
+@variable(tspst, edge[i=1:n,j=i+1:n], Bin)
+@variable(tspst, vertex[i=1:n], Bin)
 
-@objective(tsptw, Min, sum(distances[i,j].*edge[i,j] for i=1:n, j=i+1:n) - sum(positions[i,4].*vertex[i] for i=1:n))
+@objective(tspst, Min, sum(distances[i,j].*edge[i,j] for i=1:n, j=i+1:n) - sum(positions[i,4].*vertex[i] for i=1:n))
 
 # Include the first node
-@constraint(tsptw, vertex[1] == 1)
+@constraint(tspst, vertex[1] == 1)
 
 # GSEC
 for num in 3:n
@@ -40,22 +40,22 @@ for num in 3:n
     for list in combinations(1:n, num)
         for k in list
             if !(1 in list)
-                # @constraint(tsptw, sum(edge[i,j] for i in list, j in list if i != j) - 1*sum(vertex[i] for i in list) <= - 1*vertex[k])
-                @constraint(tsptw, sum(edge[i,j] for i in list, j in list if i < j) - 1*sum(vertex[i] for i in list if i!=1) <=0)
+                # @constraint(tspst, sum(edge[i,j] for i in list, j in list if i != j) - 1*sum(vertex[i] for i in list) <= - 1*vertex[k])
+                @constraint(tspst, sum(edge[i,j] for i in list, j in list if i < j) - 1*sum(vertex[i] for i in list if i!=1) <=0)
             end
         end
     end
 end
 
 # Only choose n cities
-@constraint(tsptw, sum(vertex[i] for i=1:n) <= 4)
+@constraint(tspst, sum(vertex[i] for i=1:n) <= 4)
 
 # Vertex degree restrictions
 for i=1:n
-    @constraint(tsptw, sum(edge[i,j] for j=i+1:n if i!=j) + sum(edge[j,i] for j=1:n if j<i) == 2*vertex[i])
+    @constraint(tspst, sum(edge[i,j] for j=i+1:n if i!=j) + sum(edge[j,i] for j=1:n if j<i) == 2*vertex[i])
 end
 
-solve(tsptw)
+solve(tspst)
 
 x = zeros(n,n)
 edge_values = getvalue(edge)
@@ -65,7 +65,46 @@ end
 x = x + x'
 
 # draw_layout_adj(x, convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="graph.svg")
-# draw_layout_adj(x, convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph.svg")
+draw_layout_adj(x, convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph.svg")
+
+# Get a subtour from a solution
+function get_subtour(edge_solution)
+    x = zeros(n,n)
+    for i=1:n, j=i+1:n
+        x[i,j] = edge_solution[i,j]
+    end
+    function get_next_city(row)
+        # println(row)
+        i = 1
+        while i <= length(row)
+            # println(i)
+            if row[i]==1
+                return i
+            else
+                i += 1
+            end
+        end
+        println("This does not have a next city")
+        return 0
+    end
+    flag = true
+    tour = [1]
+    next_index = 1
+    index = 1
+    while flag
+        # println(get_next_city(x[next_index,:]))
+        next_city = get_next_city(x[next_index,:])
+        if next_city != 0
+            push!(tour,next_city)
+        else
+            flag = false
+            break
+        end
+        index += 1
+        next_index = tour[index]
+    end
+    return tour
+end
 
 # Create an adjacency matrix from a tour
 function get_adj_mat(tour)
@@ -86,5 +125,5 @@ function get_cost(tour, distances::Array{Float64,2})
     for city in tour
         cost += positions[:profit][city]
     end
-    return -cost + get_adj_mat(tour).*distances
+    return -cost + sum(get_adj_mat(tour).*distances)
 end
