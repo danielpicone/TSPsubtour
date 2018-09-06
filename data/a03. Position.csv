@@ -1,0 +1,8 @@
+Position,,,,
+,,,,
+,city,xcoord,ycoord,profit
+,A,0,2,5
+,B,0,1,4
+,C,0,0,3
+,D,-1,0,4
+,E,3,3,5
