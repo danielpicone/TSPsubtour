@@ -9,6 +9,8 @@ import LightGraphs
 using GraphLayout
 using Combinatorics
 
+include("helper.jl")
+
 if length(ARGS) >= 1
     println(ARGS[1])
     global n = parse(Int64,ARGS[1])
@@ -17,6 +19,8 @@ elseif !isdefined(:n)
 # else
 #     global n = 5
 end
+max_num_cities = 7
+
 positions = CSV.read("./data/positions_"*string(n)*".csv")
 
 function get_distance(coord)
@@ -54,7 +58,6 @@ tspst = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 1, CPXPARAM_MIP_
 @constraint(tspst, vertex[1] == 1)
 
 # Only choose max_num_cities cities
-max_num_cities = 7
 @constraint(tspst, sum(vertex[i] for i=1:n) <= max_num_cities)
 
 # GSEC
@@ -90,64 +93,61 @@ x = x + x'
 draw_layout_adj(x, convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*".svg")
 
 # Get a subtour from a solution
-function get_subtour(edge_solution)
-    x = zeros(n,n)
-    for i=1:n, j=i+1:n
-        x[i,j] = edge_solution[i,j]
-        # x[j,i] = x[i,j]
-    end
-    println(x)
-    function get_next_city(row)
-        # println(row)
-        i = 1
-        while i <= length(row)
-            # println(i)
-            if row[i]==1
-                return i
-            else
-                i += 1
-            end
-        end
-        println("This does not have a next city")
-        return 0
-    end
-    flag = true
-    tour = [1]
-    next_index = 1
-    index = 1
-    while flag
-        println(get_next_city(x[next_index,:]))
-        next_city = get_next_city(x[next_index,:])
-        if next_city != 0
-            push!(tour,next_city)
-        else
-            flag = false
-            break
-        end
-        index += 1
-        next_index = tour[index]
-    end
-    return tour
-end
-
-# Create an adjacency matrix from a tour
-function get_adj_mat(tour)
-    if tour[1]!=1
-        println("Error: The tour must start at 1")
-    end
-    # adj = zeros(n,n)
-    adj = spzeros(n,n)
-    for i=1:(length(tour)-1)
-        adj[tour[i],tour[i+1]] = 1
-    end
-    adj[1,tour[end]] = 1
-    return adj
-end
-# Create a function which returns the objective cost of a tour
-function get_cost(tour, distances::Array{Float64,2})
-    cost = 0
-    for city in tour
-        cost += positions[:profit][city]
-    end
-    return -cost + sum(get_adj_mat(tour).*distances)
-end
+# function get_subtour(edge_solution::JuMP.JuMPDict{JuMP.Variable,2})
+#     return get_subtour(getvalue(edge_solution))
+# end
+#
+# function get_subtour(edge_solution)
+#     list_of_edges = []
+#     for i=1:n, j=i+1:n
+#         if(edge_solution[i,j])==1
+#             push!(list_of_edges,(i,j))
+#         end
+#     end
+#
+#     function get_next_city(city, edge)
+#         if edge[1]==city
+#             return edge[2]
+#         else
+#             return edge[1]
+#         end
+#     end
+#
+#     tour = Array{Int64,1}(0)
+#     next_city = 1
+#     push!(tour, next_city)
+#     while length(list_of_edges) > 0
+#         index = 1
+#         for pair in list_of_edges
+#             if next_city in list_of_edges[index]
+#                 next_city = get_next_city(next_city, list_of_edges[index])
+#                 push!(tour, next_city)
+#                 deleteat!(list_of_edges, index)
+#                 break
+#             end
+#             index += 1
+#         end
+#     end
+#     return tour[1:end-1]
+# end
+#
+# # Create an adjacency matrix from a tour
+# function get_adj_mat(tour)
+#     if tour[1]!=1
+#         println("Error: The tour must start at 1")
+#     end
+#     adj = spzeros(n,n)
+#     for i=1:(length(tour)-1)
+#         adj[tour[i],tour[i+1]] = 1
+#     end
+#     adj[1,tour[end]] = 1
+#     return adj
+# end
+# # Create a function which returns the objective cost of a tour
+# function get_cost(tour, distances::Array{Float64,2})
+#     cost = 0
+#     for city in tour
+#         cost += positions[:profit][city]
+#     end
+#     return -cost + sum(get_adj_mat(tour).*distances)
+# end
