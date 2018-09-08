@@ -92,62 +92,9 @@ x = x + x'
 
 draw_layout_adj(x, convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*".svg")
 
-# Get a subtour from a solution
-# function get_subtour(edge_solution::JuMP.JuMPDict{JuMP.Variable,2})
-#     return get_subtour(getvalue(edge_solution))
-# end
-#
-# function get_subtour(edge_solution)
-#     list_of_edges = []
-#     for i=1:n, j=i+1:n
-#         if(edge_solution[i,j])==1
-#             push!(list_of_edges,(i,j))
-#         end
-#     end
-#
-#     function get_next_city(city, edge)
-#         if edge[1]==city
-#             return edge[2]
-#         else
-#             return edge[1]
-#         end
-#     end
-#
-#     tour = Array{Int64,1}(0)
-#     next_city = 1
-#     push!(tour, next_city)
-#     while length(list_of_edges) > 0
-#         index = 1
-#         for pair in list_of_edges
-#             if next_city in list_of_edges[index]
-#                 next_city = get_next_city(next_city, list_of_edges[index])
-#                 push!(tour, next_city)
-#                 deleteat!(list_of_edges, index)
-#                 break
-#             end
-#             index += 1
-#         end
-#     end
-#     return tour[1:end-1]
-# end
-#
-# # Create an adjacency matrix from a tour
-# function get_adj_mat(tour)
-#     if tour[1]!=1
-#         println("Error: The tour must start at 1")
-#     end
-#     adj = spzeros(n,n)
-#     for i=1:(length(tour)-1)
-#         adj[tour[i],tour[i+1]] = 1
-#     end
-#     adj[1,tour[end]] = 1
-#     return adj
-# end
-# # Create a function which returns the objective cost of a tour
-# function get_cost(tour, distances::Array{Float64,2})
-#     cost = 0
-#     for city in tour
-#         cost += positions[:profit][city]
-#     end
-#     return -cost + sum(get_adj_mat(tour).*distances)
-# end
+
+################################
+# Create the RMP_τ
+################################
+
+rmp_τ = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 1, CPXPARAM_MIP_Display = 2))

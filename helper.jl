@@ -8,7 +8,6 @@ function get_subtour(edge_solution::JuMP.JuMPDict{JuMP.Variable,2})
 end
 
 function get_subtour(edge_solution)
-    # n = maximum(maximum(keys(edge_solution)))
     list_of_edges = []
     for i=1:n, j=i+1:n
         if(edge_solution[i,j])==1
@@ -16,13 +15,6 @@ function get_subtour(edge_solution)
         end
     end
 
-    function get_next_city(city, edge)
-        if edge[1]==city
-            return edge[2]
-        else
-            return edge[1]
-        end
-    end
 
     tour = Array{Int64,1}(0)
     next_city = 1
@@ -42,6 +34,33 @@ function get_subtour(edge_solution)
     return tour[1:end-1]
 end
 
+function get_next_city(city, edge)
+    if edge[1]==city
+        return edge[2]
+    else
+        return edge[1]
+    end
+end
+
+function create_tour(list_of_edges)
+    tour = Array{Int64,1}(0)
+    # next_city = 1
+    next_city = list_of_edges[1][1]
+    push!(tour, next_city)
+    while length(list_of_edges) > 0
+        index = 1
+        for pair in list_of_edges
+            if next_city in list_of_edges[index]
+                next_city = get_next_city(next_city, list_of_edges[index])
+                push!(tour, next_city)
+                deleteat!(list_of_edges, index)
+                break
+            end
+            index += 1
+        end
+    end
+    return tour[1:end-1]
+end
 # Create an adjacency matrix from a tour
 function get_adj_mat(tour)
     if tour[1]!=1
@@ -63,4 +82,16 @@ function get_cost(tour, distances::Array{Float64,2})
     return -cost + sum(get_adj_mat(tour).*distances)
 end
 
+function consolidate_sets(dict)
+    for i=1:length(dict)
+        for j=i+1:length(dict)
+            if length(intersect(dict[i]["set"], dict[j]["set"])) >= 1
+                append!(dict[i]["edges"], dict[j]["edges"])
+                dict[i]["set"] = union(dict[i]["set"],dict[j]["set"])
+                delete!(dict, j)
+            end
+        end
+    end
+    return dict
+end
 # end
