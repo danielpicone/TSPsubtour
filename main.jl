@@ -2,14 +2,22 @@
 # This file matches all data and creates the relevant dataframe
 
 using CSV
-# using DataFrames
+using DataFrames
 using CPLEX
 using JuMP
 import LightGraphs
 using GraphLayout
 using Combinatorics
 
-positions = CSV.read("./data/a03. Position.csv", header = 3)[:,2:end]
+if length(ARGS) >= 1
+    println(ARGS[1])
+    global n = parse(Int64,ARGS[1])
+elseif !isdefined(:n)
+    global n = 10
+# else
+#     global n = 5
+end
+positions = CSV.read("./data/positions_"*string(n)*".csv")
 
 function get_distance(coord)
     n = size(coord)[1]
@@ -20,10 +28,21 @@ function get_distance(coord)
     return (D+D')./2
 end
 
+function create_problem(num_cities)
+    df = DataFrame([1:num_cities rand(-num_cities:num_cities,num_cities,2) rand(1:num_cities,num_cities)])
+    df[1,2:end] = 0
+    rename!(df, :x1 => :city, :x2 => :xcoord, :x3 => :ycoord, :x4 => :profit)
+    return df
+end
+
+# for n in 5:30
+#     positions = create_problem(n)
+#     CSV.write("data/positions_"*string(n)*".csv", positions)
+# end
+
 distances = get_distance(positions)
 
-global n = size(positions)[1]
-tspst = JuMP.Model(solver = CplexSolver())
+tspst = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 1, CPXPARAM_MIP_Display = 2))
 
 # Add edge variables
 @variable(tspst, edge[i=1:n,j=i+1:n], Bin)
@@ -34,27 +53,31 @@ tspst = JuMP.Model(solver = CplexSolver())
 # Include the first node
 @constraint(tspst, vertex[1] == 1)
 
+# Only choose max_num_cities cities
+max_num_cities = 7
+@constraint(tspst, sum(vertex[i] for i=1:n) <= max_num_cities)
+
 # GSEC
-for num in 3:n
-    # for list in Combinatorics.permutations(1:n, num)
+println("Creating the generalised subtour elimination constraints")
+for num in 3:max_num_cities
+# for num in 3:n
+    println("Up to $num cities")
     for list in combinations(1:n, num)
         for k in list
             if !(1 in list)
-                # @constraint(tspst, sum(edge[i,j] for i in list, j in list if i != j) - 1*sum(vertex[i] for i in list) <= - 1*vertex[k])
-                @constraint(tspst, sum(edge[i,j] for i in list, j in list if i < j) - 1*sum(vertex[i] for i in list if i!=1) <=0)
+                @constraint(tspst, sum(edge[i,j] for i in list, j in list if i < j) - sum(vertex[i] for i in list if i!=1) <= - vertex[k])
             end
         end
     end
 end
 
-# Only choose n cities
-@constraint(tspst, sum(vertex[i] for i=1:n) <= 4)
 
 # Vertex degree restrictions
 for i=1:n
     @constraint(tspst, sum(edge[i,j] for j=i+1:n if i!=j) + sum(edge[j,i] for j=1:n if j<i) == 2*vertex[i])
 end
 
+println("Solving the model now")
 solve(tspst)
 
 x = zeros(n,n)
@@ -64,15 +87,16 @@ for i=1:n, j=i+1:n
 end
 x = x + x'
 
-# draw_layout_adj(x, convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="graph.svg")
-draw_layout_adj(x, convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph.svg")
+draw_layout_adj(x, convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*".svg")
 
 # Get a subtour from a solution
 function get_subtour(edge_solution)
     x = zeros(n,n)
     for i=1:n, j=i+1:n
         x[i,j] = edge_solution[i,j]
+        # x[j,i] = x[i,j]
     end
+    println(x)
     function get_next_city(row)
         # println(row)
         i = 1
@@ -92,7 +116,7 @@ function get_subtour(edge_solution)
     next_index = 1
     index = 1
     while flag
-        # println(get_next_city(x[next_index,:]))
+        println(get_next_city(x[next_index,:]))
         next_city = get_next_city(x[next_index,:])
         if next_city != 0
             push!(tour,next_city)
