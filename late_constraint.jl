@@ -8,9 +8,6 @@ import LightGraphs
 using GraphLayout
 using Combinatorics
 
-srand(100)
-# n = 50
-
 include("helper.jl")
 
 if length(ARGS) >= 1
@@ -19,6 +16,7 @@ if length(ARGS) >= 1
 elseif !isdefined(:n)
     global n = 10
 end
+
 max_weight = Int(round(n/2))
 
 positions = CSV.read("./data/positions_"*string(n)*".csv")
@@ -95,94 +93,6 @@ function get_subtour(edge_solution)
     return tour[1:end-1]
 end
 
-function partition_edges(edge_solution::JuMP.JuMPDict{JuMP.Variable,2})
-    return partition_edges(getvalue(edge_solution))
-end
-
-function partition_edges(edge_solution)
-    list_of_edges = []
-    for i=1:n, j=i+1:n
-        # if(edge_solution[i,j])==1
-        if abs(edge_solution[i,j]-1) < 0.000001
-            push!(list_of_edges,(i,j))
-        end
-    end
-    tours = Array{Array{Tuple{Int64, Int64},1}}(n)
-
-    function test_if_edge_in_set(vertex_set, edge)
-        if edge[1] in vertex_set || edge[2] in vertex_set
-            return true
-        else
-            return false
-        end
-    end
-
-    tours = Dict()
-    num_tours = 1
-    tours[1] = Dict("edges" => [list_of_edges[1]], "set" => Set(list_of_edges[1]))
-    deleteat!(list_of_edges,1)
-    for edge in list_of_edges
-        is_in_existing_tour = false
-        for index=1:num_tours
-            is_in_existing_tour = test_if_edge_in_set(tours[index]["set"], edge)
-            if is_in_existing_tour
-                push!(tours[index]["edges"],edge)
-                push!(tours[index]["set"], edge[1], edge[2])
-                break
-            end
-        end
-        if !is_in_existing_tour
-            num_tours += 1
-            tours[num_tours] = Dict("edges" => [edge], "set" => Set(edge))
-        end
-    end
-    return tours
-
-end
-
-# println("hey")
-# subtours_dict = edge |> partition_edges |> consolidate_sets
-# subtours = Array{Array{Int64,1},1}(length(subtours_dict))
-# for (index, key) in enumerate(keys(subtours_dict))
-#     subtours[index] = create_tour(subtours_dict[key]["edges"])
-# end
-
-function get_subtours(edge)
-    subtours_dict = edge |> partition_edges |> consolidate_sets
-    subtours = Array{Array{Int64,1},1}(length(subtours_dict))
-    for (index, key) in enumerate(keys(subtours_dict))
-        subtours[index] = create_tour(subtours_dict[key]["edges"])
-    end
-    return subtours
-end
-
-function add_gsec!(subtour)
-    for k in subtour
-        @constraint(tspst, sum(edge[i,j] for i in subtour,j in subtour if i < j) <= sum(vertex[i] for i in subtour if i != k))
-    end
-end
-
-function is_valid_solution(edge_solution::JuMP.JuMPDict{JuMP.Variable,2})
-    return edge_solution |> getvalue |> is_valid_solution
-end
-
-function is_valid_solution(edge_solution)
-    subtours_dict = edge |> partition_edges |> consolidate_sets
-    subtours = Array{Array{Int64,1},1}(length(subtours_dict))
-    for (index, key) in enumerate(keys(subtours_dict))
-        subtours[index] = create_tour(subtours_dict[key]["edges"])
-    end
-    if subtours |> length > 1
-        return false
-    elseif subtours |> length == 1
-        return true
-    else
-        println("ERROR: The length of subtours is ", length(subtours))
-    end
-end
-
-# for i=1:3
-# println(i)
 while !is_valid_solution(edge)
     subtours = get_subtours(edge)
     if length(subtours)!=1
