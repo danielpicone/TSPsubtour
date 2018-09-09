@@ -8,6 +8,9 @@ import LightGraphs
 using GraphLayout
 using Combinatorics
 
+srand(100)
+# n = 50
+
 include("helper.jl")
 
 if length(ARGS) >= 1
@@ -16,7 +19,7 @@ if length(ARGS) >= 1
 elseif !isdefined(:n)
     global n = 10
 end
-max_num_cities = 7
+max_weight = Int(round(n/2))
 
 positions = CSV.read("./data/positions_"*string(n)*".csv")
 
@@ -28,14 +31,6 @@ function get_distance(coord)
     end
     return (D+D')./2
 end
-
-function create_problem(num_cities)
-    df = DataFrame([1:num_cities rand(-num_cities:num_cities,num_cities,2) rand(1:num_cities,num_cities)])
-    df[1,2:end] = 0
-    rename!(df, :x1 => :city, :x2 => :xcoord, :x3 => :ycoord, :x4 => :profit)
-    return df
-end
-
 
 distances = get_distance(positions)
 
@@ -51,9 +46,7 @@ tspst = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 1, CPXPARAM_MIP_
 @constraint(tspst, vertex[1] == 1)
 
 # Only choose max_num_cities cities
-@constraint(tspst, sum(vertex[i] for i=1:n) <= max_num_cities)
-
-
+@constraint(tspst, sum(positions[i,5]*vertex[i] for i=1:n) <= max_weight)
 
 # Vertex degree restrictions
 for i=1:n
@@ -63,15 +56,7 @@ end
 println("Solving the model now")
 solve(tspst)
 
-draw_layout_adj(x, convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*"_late.svg")
-
-x = zeros(n,n)
-edge_values = getvalue(edge)
-for i=1:n, j=i+1:n
-    x[i,j] = edge_values[i,j]
-end
-x = x + x'
-
+# draw_layout_adj(get_adj_mat(edge), convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*"_late.svg")
 # draw_layout_adj(x, convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*"_late.svg")
 
 # Determine if multiple subtours exist
@@ -79,7 +64,7 @@ x = x + x'
 function get_subtour(edge_solution)
     list_of_edges = []
     for i=1:n, j=i+1:n
-        if(edge_solution[i,j])==1
+        if abs(edge_solution[i,j]-1) < 0.000001
             push!(list_of_edges,(i,j))
         end
     end
@@ -117,7 +102,8 @@ end
 function partition_edges(edge_solution)
     list_of_edges = []
     for i=1:n, j=i+1:n
-        if(edge_solution[i,j])==1
+        # if(edge_solution[i,j])==1
+        if abs(edge_solution[i,j]-1) < 0.000001
             push!(list_of_edges,(i,j))
         end
     end
@@ -154,11 +140,20 @@ function partition_edges(edge_solution)
 
 end
 
-println("hey")
-subtours_dict = edge |> partition_edges |> consolidate_sets
-subtours = Array{Array{Int64,1},1}(length(subtours_dict))
-for (index, key) in enumerate(keys(subtours_dict))
-    subtours[index] = create_tour(subtours_dict[key]["edges"])
+# println("hey")
+# subtours_dict = edge |> partition_edges |> consolidate_sets
+# subtours = Array{Array{Int64,1},1}(length(subtours_dict))
+# for (index, key) in enumerate(keys(subtours_dict))
+#     subtours[index] = create_tour(subtours_dict[key]["edges"])
+# end
+
+function get_subtours(edge)
+    subtours_dict = edge |> partition_edges |> consolidate_sets
+    subtours = Array{Array{Int64,1},1}(length(subtours_dict))
+    for (index, key) in enumerate(keys(subtours_dict))
+        subtours[index] = create_tour(subtours_dict[key]["edges"])
+    end
+    return subtours
 end
 
 function add_gsec!(subtour)
@@ -167,7 +162,7 @@ function add_gsec!(subtour)
     end
 end
 
-function is_valid_solution(edge_solution)
+function is_valid_solution(edge_solution::JuMP.JuMPDict{JuMP.Variable,2})
     return edge_solution |> getvalue |> is_valid_solution
 end
 
@@ -179,20 +174,26 @@ function is_valid_solution(edge_solution)
     end
     if subtours |> length > 1
         return false
-    elseif subtours |> length == 0
+    elseif subtours |> length == 1
         return true
     else
-        println("ERROR: The length of subtours is ", length(subtour))
+        println("ERROR: The length of subtours is ", length(subtours))
     end
 end
 
-for i=1:100
-    solve(tspst)
-    for tour in subtours
-        if !(1 in tour)
-            add_gsec!(tour)
+# for i=1:3
+# println(i)
+while !is_valid_solution(edge)
+    subtours = get_subtours(edge)
+    if length(subtours)!=1
+        for tour in subtours
+            if !(1 in tour)
+                add_gsec!(tour)
+            end
         end
     end
+    solve(tspst)
+    println(MathProgBase.numlinconstr(tspst))
 end
 
-draw_layout_adj(x, convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*"_late_solved.svg")
+# draw_layout_adj(get_adj_mat(edge), convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*"_late_solved.svg")
