@@ -62,11 +62,11 @@ rmp_τ = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 1, CPXPARAM_MIP
 
 # Add the objective function
 @objective(rmp_τ, Min, sum( (α_tilde[v] + ϵ_α) * η_ub[v] - (α_tilde[v] - ϵ_α) * η_lb[v] for v=3:n) +
-    (β_tilde + ϵ_β)*η_ub_knap - (β_tilde + ϵ_β)*η_lb_knap)
+    (β_tilde + ϵ_β)*η_ub_knap - (β_tilde - ϵ_β)*η_lb_knap)
 
 # Add constraint (10a)
 @constraint(rmp_τ, vertex_constraints[i=3:n], η_ub[i] - η_lb[i] == 0 )
-@constraint(rmp_τ, knapsack_constraint, η_ub_knap - η_lb_knap >= 0 )
+@constraint(rmp_τ, knapsack_constraint, η_ub_knap - η_lb_knap <= 0 )
 
 # Create the constraint refs
 constraint_refs = Vector{ConstraintRef}(0)
@@ -140,7 +140,7 @@ end
 # Get value for constraint (10a)
 value = OffsetArray{Float64}(3:n)
 for k=3:n
-    value[k] = sum(new_column.edge[i,j] for i=1:n, j=1:n if (i<j && (i==k || j==k))) - 2* new_column.k[k]
+    value[k] = sum(new_column.edge[i,j] for i=1:n, j=1:n if (i<j && (i==k || j==k))) - 2* new_column.vertex[k]
 end
 
 # Get value for constraint (10b)
