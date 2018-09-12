@@ -44,6 +44,7 @@ distances = get_distance(positions)
 println("Create the RMP")
 ϵ_α = 1
 ϵ_β = 1
+ϵ_μ = 1
 
 α_tilde = fill!(OffsetArray{Float64}(2:n),0)
 β_tilde = 0
@@ -52,6 +53,8 @@ I_P = Set{Int64}()
 v_lb = -Inf
 v_ub = Inf
 c_1 = Inf
+
+columns = Dict()
 
 rmp_τ = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 1, CPXPARAM_MIP_Display = 2))
 
@@ -78,82 +81,134 @@ push!(constraint_refs, knapsack_constraint)
 solve(rmp_τ)
 
 
-α = OffsetArray{Float64}(3:n)
-for i=3:n
-    α[i]=getdual(vertex_constraints[i])
-end
-
-β = getdual(knapsack_constraint)
+# α = OffsetArray{Float64}(3:n)
+# for i=3:n
+#     α[i]=getdual(vertex_constraints[i])
+# end
+#
+# β = getdual(knapsack_constraint)
 # Create the CGP
 
-cgp = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 1, CPXPARAM_MIP_Display = 2))
-
-@variable(cgp, edge[i=1:n, j=i+1:n], Bin)
-@variable(cgp, vertex[i=1:n], Bin)
+# cgp = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 1, CPXPARAM_MIP_Display = 2))
+#
+# @variable(cgp, edge[i=1:n, j=i+1:n], Bin)
+# @variable(cgp, vertex[i=1:n], Bin)
 
 
 # Create the modified distances
-w_hat = distances
-for i=2:n
-    for j=i+1:n
-        w_hat[i,j] -= α_tilde[i] + α_tilde[j]
+# w_hat = distances
+# for i=2:n
+#     for j=i+1:n
+#         w_hat[i,j] -= α_tilde[i] + α_tilde[j]
+#     end
+# end
+#
+# r = positions[:profit]
+# for v=3:n
+#     r[v] = r[v] - 2*α[v] + positions[:weight][v] * β
+# end
+
+# @objective(cgp, Min, sum(w_hat[i,j]*edge[i,j] for i=1:n, j=i+1:n) - sum(r[i] * vertex[i] for i=2:n))
+#
+# # Constraint (6c)
+# @constraint(cgp, sum(edge[1,i] for i=2:n) == 2)
+# # Constraint (2a)
+# @constraint(cgp, sum(edge[i,j] for i=1:n, j=i+1:n) == sum(vertex[i] for i=1:n))
+# @constraint(cgp, vertex[1] == 1)
+# # Constraints (2b)
+# println("Creating the generalised subtour elimination constraints")
+# for num in 2:n
+#     println("Up to $num cities")
+#     for list in combinations(2:n, num)
+#         println(list)
+#         println(length(list))
+#         @constraint(cgp, sum(edge[i,j] for i in list, j in list if i < j) >= 1 + sum(vertex[i] for i in list if i!=1) - length(list))
+#     end
+# end
+#
+# solve(cgp)
+
+function create_reduced_costs(rmp)
+    α = getdual(vertex_constraints)
+    β = getdual(knapsack_constraint)
+    w_hat = distances
+    for i=3:n
+        for j=i+1:n
+            w_hat[i,j] -= α[i] + α[j]
+        end
     end
-end
 
-r = positions[:profit]
-for v=3:n
-    r[v] = r[v] - 2*α[v] + positions[:weight][v] * β
-end
-
-@objective(cgp, Min, sum(w_hat[i,j]*edge[i,j] for i=1:n, j=i+1:n) - sum(r[i] * vertex[i] for i=2:n))
-
-# Constraint (6c)
-@constraint(cgp, sum(edge[1,i] for i=2:n) == 2)
-# Constraint (2a)
-@constraint(cgp, sum(edge[i,j] for i=1:n, j=i+1:n) == sum(vertex[i] for i=1:n))
-@constraint(cgp, vertex[1] == 1)
-# Constraints (2b)
-println("Creating the generalised subtour elimination constraints")
-for num in 2:n
-    println("Up to $num cities")
-    for list in combinations(2:n, num)
-        println(list)
-        println(length(list))
-        @constraint(cgp, sum(edge[i,j] for i in list, j in list if i < j) >= 1 + sum(vertex[i] for i in list if i!=1) - length(list))
+    r = positions[:profit]
+    r_hat = r
+    for v=3:n
+        r_hat[v] = r[v] - 2*α[v] + positions[:weight][v] * β
     end
+
+    return w_hat, r_hat
 end
 
-solve(cgp)
+function create_cgp(rmp)
+    w_hat, r_hat = create_reduced_costs(rmp)
+    cgp = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 1, CPXPARAM_MIP_Display = 2))
 
-new_column = soln(getvalue(edge), getvalue(vertex))
+    @variable(cgp, edge[i=1:n, j=i+1:n], Bin)
+    @variable(cgp, vertex[i=1:n], Bin)
+    @objective(cgp, Min, sum(w_hat[i,j]*edge[i,j] for i=1:n, j=i+1:n) - sum(r_hat[i] * vertex[i] for i=2:n))
+
+    # Constraint (6c)
+    @constraint(cgp, sum(edge[1,i] for i=2:n) == 2)
+    # Constraint (2a)
+    @constraint(cgp, sum(edge[i,j] for i=1:n, j=i+1:n) == sum(vertex[i] for i=1:n))
+    @constraint(cgp, vertex[1] == 1)
+    # Constraints (2b)
+    println("Creating the generalised subtour elimination constraints")
+    # Fix this constraint, edges must have one vertex IN and one vertex OUT of the set
+    for num in 1:n
+        println("Up to $num cities")
+        for list in combinations(2:n, num)
+            println(list)
+            println(length(list))
+            @constraint(cgp, sum(edge[i,j] for i in list, j in list if i < j) >= 1 + sum(vertex[i] for i in list if i!=1) - length(list))
+        end
+    end
+    return cgp
+end
+
+
+# new_column = soln(getvalue(edge), getvalue(vertex))
 # Append new column
 
-# Get objective value of new column
-cost = 0
-for i=1:n
-    cost -= positions[:weight][i] * getvalue(vertex[i])
-    for j=i+1:n
-        cost += distances[i,j] * getvalue(edge[i,j])
+function append_new_col!(new_column)
+    columns[τ] = new_column
+    # Get objective value of new column
+    cost = 0
+    for i=1:n
+        cost -= positions[:weight][i] * getvalue(vertex[i])
+        for j=i+1:n
+            cost += distances[i,j] * getvalue(edge[i,j])
+        end
     end
-end
 
-# Get value for constraint (10a)
-value = OffsetArray{Float64}(3:n)
-for k=3:n
-    value[k] = sum(new_column.edge[i,j] for i=1:n, j=1:n if (i<j && (i==k || j==k))) - 2* new_column.vertex[k]
-end
+    # Get value for constraint (10a)
+    value = OffsetArray{Float64}(3:n)
+    for k=3:n
+        value[k] = sum(new_column.edge[i,j] for i=1:n, j=1:n if (i<j && (i==k || j==k))) - 2* new_column.vertex[k]
+    end
 
-# Get value for constraint (10b)
-weight_value = sum(positions[:weight][vertex] * new_column.vertex[vertex] for vertex=2:n) - max_weight
+    # Get value for constraint (10b)
+    weight_value = sum(positions[:weight][vertex] * new_column.vertex[vertex] for vertex=2:n) - max_weight
 
-# Add the new column
-# Make the coefficients an array
-coeff_array = []
-for i in [value, weight_value]
-    append!(coeff_array,i)
+    # Add the new column
+    # Make the coefficients an array
+    coeff_array = []
+    for i in [value, weight_value]
+        append!(coeff_array,i)
+    end
+    # @variable(rmp_τ, 0 <= λ_new <= Inf, objective = cost, inconstraints = constraint_refs, coefficients = convert(Array{Float64,1},coeff_array))
+    if !(isdefined(:convexity_constraint))
+        @constraint(rmp_τ, convexity_constraint, 0 == 1)
+        push!(constraint_refs, convexity_constraint)
+    end
+    @variable(rmp_τ, 0 <= λ_new <= Inf, objective = cost, inconstraints = constraint_refs, coefficients = convert(Array{Float64,1}, [coeff_array;1]))
+    setname(λ_new,string("λ[",τ,"]"))
 end
-# @variable(rmp_τ, 0 <= λ_new <= Inf, objective = cost, inconstraints = constraint_refs, coefficients = convert(Array{Float64,1},coeff_array))
-@constraint(rmp_τ, convexity_constraint, 0 == 1)
-push!(constraint_refs, convexity_constraint)
-@variable(rmp_τ, 0 <= λ_new <= Inf, objective = cost, inconstraints = constraint_refs, coefficients = convert(Array{Float64,1}, [coeff_array;1]))
-setname(λ_new,string("λ[",τ,"]"))

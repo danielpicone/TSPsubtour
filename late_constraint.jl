@@ -30,35 +30,6 @@ function get_distance(coord)
     return (D+D')./2
 end
 
-distances = get_distance(positions)
-
-tspst = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 1, CPXPARAM_MIP_Display = 2))
-
-# Add edge variables
-@variable(tspst, edge[i=1:n,j=i+1:n], Bin)
-@variable(tspst, vertex[i=1:n], Bin)
-
-@objective(tspst, Min, sum(distances[i,j].*edge[i,j] for i=1:n, j=i+1:n) - sum(positions[i,4].*vertex[i] for i=1:n))
-
-# Include the first node
-@constraint(tspst, vertex[1] == 1)
-
-# Only choose max_num_cities cities
-@constraint(tspst, sum(positions[i,5]*vertex[i] for i=1:n) <= max_weight)
-
-# Vertex degree restrictions
-for i=1:n
-    @constraint(tspst, sum(edge[i,j] for j=i+1:n if i!=j) + sum(edge[j,i] for j=1:n if j<i) == 2*vertex[i])
-end
-
-println("Solving the model now")
-solve(tspst)
-
-# draw_layout_adj(get_adj_mat(edge), convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*"_late.svg")
-# draw_layout_adj(x, convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*"_late.svg")
-
-# Determine if multiple subtours exist
-
 function get_subtour(edge_solution)
     list_of_edges = []
     for i=1:n, j=i+1:n
@@ -93,6 +64,36 @@ function get_subtour(edge_solution)
     return tour[1:end-1]
 end
 
+distances = get_distance(positions)
+
+tspst = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 1, CPXPARAM_MIP_Display = 2))
+
+# Add edge variables
+@variable(tspst, edge[i=1:n,j=i+1:n], Bin)
+@variable(tspst, vertex[i=1:n], Bin)
+
+@objective(tspst, Min, sum(distances[i,j].*edge[i,j] for i=1:n, j=i+1:n) - sum(positions[i,4].*vertex[i] for i=1:n))
+
+# Include the first node
+@constraint(tspst, vertex[1] == 1)
+
+# Only choose max_num_cities cities
+@constraint(tspst, sum(positions[i,5]*vertex[i] for i=1:n) <= max_weight)
+
+# Vertex degree restrictions
+for i=1:n
+    @constraint(tspst, sum(edge[i,j] for j=i+1:n if i!=j) + sum(edge[j,i] for j=1:n if j<i) == 2*vertex[i])
+end
+
+println("Solving the model now")
+solve(tspst)
+
+# draw_layout_adj(get_adj_mat(edge), convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*"_late.svg")
+# draw_layout_adj(x, convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*"_late.svg")
+
+# Determine if multiple subtours exist
+
+start_time = time()
 while !is_valid_solution(edge)
     subtours = get_subtours(edge)
     if length(subtours)!=1
@@ -105,5 +106,7 @@ while !is_valid_solution(edge)
     solve(tspst)
     println(MathProgBase.numlinconstr(tspst))
 end
+end_time = time()
 
+println("Time taken was: ", end_time - start_time, " seconds")
 # draw_layout_adj(get_adj_mat(edge), convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*"_late_solved.svg")
