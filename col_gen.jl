@@ -3,7 +3,8 @@ using CSV
 using DataFrames
 using CPLEX
 using JuMP
-import LightGraphs
+using LightGraphs
+using SimpleWeightedGraphs
 using GraphLayout
 using Combinatorics
 using OffsetArrays
@@ -162,7 +163,7 @@ function create_cgp(rmp)
     @constraint(cgp, vertex[1] == 1)
     # Constraints (2b)
     println("Creating the generalised subtour elimination constraints")
-    # Fix this constraint, edges must have one vertex IN and one vertex OUT of the set
+    # TODO: Fix this constraint, edges must have one vertex IN and one vertex OUT of the set
     for num in 1:n
         println("Up to $num cities")
         for list in combinations(2:n, num)
@@ -173,6 +174,18 @@ function create_cgp(rmp)
     end
     return cgp
 end
+
+## Create the C1T problem
+w_hat, r_hat = create_reduced_costs(rmp_τ)
+c1t_distances = zeros(n+1, n+1)
+c1t_distances[n+1,1:n] = r_hat
+c1t_distances[1:n,n+1] = r_hat
+c1t_distances[1:n,1:n] = w_hat
+distance_graph = SimpleWeightedGraph(n+1)
+for i=1:n+1, j=i+1:n+1
+    add_edge!(distance_graph, i, j, c1t_distances[i,j])
+end
+mst = kruskal_mst(distance_graph)
 
 
 # new_column = soln(getvalue(edge), getvalue(vertex))
