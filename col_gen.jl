@@ -3,6 +3,7 @@ using CSV
 using DataFrames
 using CPLEX
 using JuMP
+# import Graphs
 using LightGraphs
 using SimpleWeightedGraphs
 using GraphLayout
@@ -182,46 +183,122 @@ c1t_distances[n+1,1:n] = r_hat
 c1t_distances[1:n,n+1] = r_hat
 c1t_distances[1:n,1:n] = w_hat
 distance_graph = SimpleWeightedGraph(n+1)
+# distance_graph = LightGraphs.AbstractGraph(n+1)
+edges_df = DataFrame(in = Int64[], out = Int64[], weight = Float64[])
 for i=1:n+1, j=i+1:n+1
-    add_edge!(distance_graph, i, j, c1t_distances[i,j])
+    # Graphs.add_edge!(distance_graph, i, j, c1t_distances[i,j])
+    LightGraphs.add_edge!(distance_graph, i, j, c1t_distances[i,j])
+    push!(edges_df, [i j c1t_distances[i,j]])
 end
-mst = kruskal_mst(distance_graph)
+sort!(edges_df, :weight)
+mst = LightGraphs.kruskal_mst(distance_graph)
+# mst = Graphs.kruskal_minimum_spantree(distance_graph)
+# tree = Graphs.simple_graph(n+1, is_directed = false)
+# mst_distances = copy(c1t_distances)
+# for i=1:length(mst)
+#     Graphs.add_edge!(tree, mst[i].src, mst[i].dst)
+#     if mst[i].src < mst[i].dst
+#         mst_distances[mst[i].src, mst[i].dst] = Inf
+#     else
+#         mst_distances[mst[i].dst, mst[i].src] = Inf
+#     end
+# end
+if !(LightGraphs.Edge(1,n+1) in mst)
+    add_edge!(mst, 1, n + 1)
+end
 
-
-# new_column = soln(getvalue(edge), getvalue(vertex))
-# Append new column
-
-function append_new_col!(new_column)
-    columns[τ] = new_column
-    # Get objective value of new column
-    cost = 0
-    for i=1:n
-        cost -= positions[:weight][i] * getvalue(vertex[i])
-        for j=i+1:n
-            cost += distances[i,j] * getvalue(edge[i,j])
+function swap_edges_remove(vertex, tree, edges)
+    # First find the best two edges to swap
+    best_swap_value = Inf
+    best_swap = [(1,2),(2,3)]
+    function find_weight(edge, edge_df)
+        if edge.source < edge.target
+            return edge_df[(edge_df[:in].==edge.source) .& (edge_df[:out].==edge.target),:weight]
+        elseif edge.source > edge.target
+            return edge_df[(edge_df[:in].==edge.target) .& (edge_df[:out].==edge.source),:weight]
+        else
+            println("ERROR")
         end
     end
-
-    # Get value for constraint (10a)
-    value = OffsetArray{Float64}(3:n)
-    for k=3:n
-        value[k] = sum(new_column.edge[i,j] for i=1:n, j=1:n if (i<j && (i==k || j==k))) - 2* new_column.vertex[k]
+    incident_edge_list = Graphs.out_edges(vertex, tree)
+    println(incident_edge_list)
+    for edge in incident_edge_list
+        for row=1:size(edges,1)
+            println((edges[row,:in],edges[row,:out]))
+            if !((edges[row,:in],edges[row,:out]) in tree.edges)
+                swap_value = edges[row,:weight] - find_weight(edge, edges)[1]
+                println(swap_value)
+                if swap_value < best_swap_value
+                    best_swap_value = swap_value
+                    best_swap = [(edge.source, edge.target), (edges[row,:in],edges[row,:out])]
+                end
+            end
+        end
     end
+    println(best_swap)
+    println(best_swap_value)
 
-    # Get value for constraint (10b)
-    weight_value = sum(positions[:weight][vertex] * new_column.vertex[vertex] for vertex=2:n) - max_weight
+    temp = sort(edges[((edges[:in].==vertex) .| (edges[:out].==vertex)),:],:weight)
 
-    # Add the new column
-    # Make the coefficients an array
-    coeff_array = []
-    for i in [value, weight_value]
-        append!(coeff_array,i)
-    end
-    # @variable(rmp_τ, 0 <= λ_new <= Inf, objective = cost, inconstraints = constraint_refs, coefficients = convert(Array{Float64,1},coeff_array))
-    if !(isdefined(:convexity_constraint))
-        @constraint(rmp_τ, convexity_constraint, 0 == 1)
-        push!(constraint_refs, convexity_constraint)
-    end
-    @variable(rmp_τ, 0 <= λ_new <= Inf, objective = cost, inconstraints = constraint_refs, coefficients = convert(Array{Float64,1}, [coeff_array;1]))
-    setname(λ_new,string("λ[",τ,"]"))
+    return tree
+
 end
+
+# while Graphs.in_degree(1, tree) != 3
+#     if Graphs.in_degree(1, tree) > 3
+#         # Find biggest weight edge leaving 1
+#         temp = sort(edges_df[((edges_df[:in].==1) .| (edges_df[:out].==1)),:],:weight)
+#     elseif Graphs.in_degree(1, tree) < 3
+        temp = sort(edges_df[((edges_df[:in].==1) .| (edges_df[:out].==1)),:],:weight)
+#
+#     end
+# end
+#
+# min_weight = Inf
+# local min_edge
+# for i=1:n+1
+#     if mst_distances[1,i] <= min_weight
+#         min_weight = mst_distances[1,i]
+#         min_edge = [1,i]
+#     end
+# end
+# Graphs.add_edge!(tree, min_edge[1], min_edge[2])
+#
+#
+# # new_column = soln(getvalue(edge), getvalue(vertex))
+# # Append new column
+#
+# function append_new_col!(new_column)
+#     columns[τ] = new_column
+#     # Get objective value of new column
+#     cost = 0
+#     for i=1:n
+#         cost -= positions[:weight][i] * getvalue(vertex[i])
+#         for j=i+1:n
+#             cost += distances[i,j] * getvalue(edge[i,j])
+#         end
+#     end
+#
+#     # Get value for constraint (10a)
+#     value = OffsetArray{Float64}(3:n)
+#     for k=3:n
+#         value[k] = sum(new_column.edge[i,j] for i=1:n, j=1:n if (i<j && (i==k || j==k))) - 2* new_column.vertex[k]
+#     end
+#
+#     # Get value for constraint (10b)
+#     weight_value = sum(positions[:weight][vertex] * new_column.vertex[vertex] for vertex=2:n) - max_weight
+#
+#     # Add the new column
+#     # Make the coefficients an array
+#     coeff_array = []
+#     for i in [value, weight_value]
+#         append!(coeff_array,i)
+#     end
+#     # @variable(rmp_τ, 0 <= λ_new <= Inf, objective = cost, inconstraints = constraint_refs, coefficients = convert(Array{Float64,1},coeff_array))
+#     if !(isdefined(:convexity_constraint))
+#         @constraint(rmp_τ, convexity_constraint, 0 == 1)
+#         push!(constraint_refs, convexity_constraint)
+#     end
+#     @variable(rmp_τ, 0 <= λ_new <= Inf, objective = cost, inconstraints = constraint_refs, coefficients = convert(Array{Float64,1}, [coeff_array;1]))
+#     setname(λ_new,string("λ[",τ,"]"))
+# end
