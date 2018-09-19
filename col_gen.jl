@@ -183,28 +183,24 @@ c1t_distances[n+1,1:n] = r_hat
 c1t_distances[1:n,n+1] = r_hat
 c1t_distances[1:n,1:n] = w_hat
 distance_graph = SimpleWeightedGraph(n+1)
-# distance_graph = LightGraphs.AbstractGraph(n+1)
 edges_df = DataFrame(in = Int64[], out = Int64[], weight = Float64[])
 for i=1:n+1, j=i+1:n+1
-    # Graphs.add_edge!(distance_graph, i, j, c1t_distances[i,j])
     LightGraphs.add_edge!(distance_graph, i, j, c1t_distances[i,j])
     push!(edges_df, [i j c1t_distances[i,j]])
 end
 sort!(edges_df, :weight)
 mst = LightGraphs.kruskal_mst(distance_graph)
-# mst = Graphs.kruskal_minimum_spantree(distance_graph)
-# tree = Graphs.simple_graph(n+1, is_directed = false)
-# mst_distances = copy(c1t_distances)
-# for i=1:length(mst)
-#     Graphs.add_edge!(tree, mst[i].src, mst[i].dst)
-#     if mst[i].src < mst[i].dst
-#         mst_distances[mst[i].src, mst[i].dst] = Inf
-#     else
-#         mst_distances[mst[i].dst, mst[i].src] = Inf
-#     end
-# end
-if !(LightGraphs.Edge(1,n+1) in mst)
-    add_edge!(mst, 1, n + 1)
+tree = SimpleWeightedGraph(n+1)
+for i=1:length(mst)
+    add_edge!(tree, mst[i].src, mst[i].dst, distance_graph.weights[mst[i].src,mst[i].dst])
+    # if mst[i].src < mst[i].dst
+    #     mst_distances[mst[i].src, mst[i].dst] = Inf
+    # else
+    #     mst_distances[mst[i].dst, mst[i].src] = Inf
+    # end
+end
+if !(has_edge(tree,1,n+1))
+    add_edge!(tree, 1, n + 1)
 end
 
 function swap_edges_remove(vertex, tree, edges)
@@ -212,25 +208,26 @@ function swap_edges_remove(vertex, tree, edges)
     best_swap_value = Inf
     best_swap = [(1,2),(2,3)]
     function find_weight(edge, edge_df)
-        if edge.source < edge.target
-            return edge_df[(edge_df[:in].==edge.source) .& (edge_df[:out].==edge.target),:weight]
-        elseif edge.source > edge.target
-            return edge_df[(edge_df[:in].==edge.target) .& (edge_df[:out].==edge.source),:weight]
+        if edge[1] < edge[2]
+            return edge_df[(edge_df[:in].==edge[1]) .& (edge_df[:out].==edge[2]),:weight]
+        elseif edge[1] > edge[2]
+            return edge_df[(edge_df[:in].==edge[2]) .& (edge_df[:out].==edge[1]),:weight]
         else
             println("ERROR")
         end
     end
-    incident_edge_list = Graphs.out_edges(vertex, tree)
+    incident_edge_list = out_edges(tree,vertex)
     println(incident_edge_list)
-    for edge in incident_edge_list
+    for out_vertex in incident_edge_list
         for row=1:size(edges,1)
             println((edges[row,:in],edges[row,:out]))
-            if !((edges[row,:in],edges[row,:out]) in tree.edges)
-                swap_value = edges[row,:weight] - find_weight(edge, edges)[1]
+            if !(has_edge(tree,(edges[row,:in],edges[row,:out]))) & indegree(tree, out_vertex) >= 2
+                println(find_weight((1,6),edges))
+                swap_value = edges[row,:weight] - find_weight((vertex,out_vertex), edges)[1]
                 println(swap_value)
                 if swap_value < best_swap_value
                     best_swap_value = swap_value
-                    best_swap = [(edge.source, edge.target), (edges[row,:in],edges[row,:out])]
+                    best_swap = [(vertex, out_vertex), (edges[row,:in],edges[row,:out])]
                 end
             end
         end
@@ -238,18 +235,16 @@ function swap_edges_remove(vertex, tree, edges)
     println(best_swap)
     println(best_swap_value)
 
-    temp = sort(edges[((edges[:in].==vertex) .| (edges[:out].==vertex)),:],:weight)
-
     return tree
 
 end
 
-# while Graphs.in_degree(1, tree) != 3
-#     if Graphs.in_degree(1, tree) > 3
+# while indegree(tree,1) != 3
+#     if indegree(tree, 1) > 3
 #         # Find biggest weight edge leaving 1
 #         temp = sort(edges_df[((edges_df[:in].==1) .| (edges_df[:out].==1)),:],:weight)
-#     elseif Graphs.in_degree(1, tree) < 3
-        temp = sort(edges_df[((edges_df[:in].==1) .| (edges_df[:out].==1)),:],:weight)
+#     elseif indegree(tree,1) < 3
+#         temp = sort(edges_df[((edges_df[:in].==1) .| (edges_df[:out].==1)),:],:weight)
 #
 #     end
 # end
