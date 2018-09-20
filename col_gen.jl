@@ -3,9 +3,9 @@ using CSV
 using DataFrames
 using CPLEX
 using JuMP
-# import Graphs
 using LightGraphs
 using SimpleWeightedGraphs
+using MetaGraphs
 using GraphLayout
 using Combinatorics
 using OffsetArrays
@@ -190,18 +190,25 @@ for i=1:n+1, j=i+1:n+1
 end
 sort!(edges_df, :weight)
 mst = LightGraphs.kruskal_mst(distance_graph)
-tree = SimpleWeightedGraph(n+1)
+# tree = SimpleWeightedGraph(n+1)
+tree = MetaGraph(n+1)
 for i=1:length(mst)
-    add_edge!(tree, mst[i].src, mst[i].dst, distance_graph.weights[mst[i].src,mst[i].dst])
-    # if mst[i].src < mst[i].dst
-    #     mst_distances[mst[i].src, mst[i].dst] = Inf
-    # else
-    #     mst_distances[mst[i].dst, mst[i].src] = Inf
-    # end
+    add_edge!(tree, mst[i].src, mst[i].dst)
+    set_prop!(tree, mst[i].src, mst[i].dst, :weight, distance_graph.weights[mst[i].src,mst[i].dst])
 end
 if !(has_edge(tree,1,n+1))
     add_edge!(tree, 1, n + 1)
+    set_prop!(tree, 1, n + 1, :weight, distance_graph.weights[1,n+1])
+else
+    for row=1:size(edges_df,1)
+        if !(has_edge(tree, (edges_df[row,:in], edges_df[row,:out])))
+            add_edge!(tree, edges_df[row,:in], edges_df[row,:out])
+            set_prop!(tree, edges_df[row,:in], edges_df[row,:out], :weight, edges_df[row, :weight])
+            break
+        end
+    end
 end
+
 
 function swap_edges_remove(vertex, tree, edges)
     # First find the best two edges to swap
@@ -209,22 +216,20 @@ function swap_edges_remove(vertex, tree, edges)
     best_swap = [(1,2),(2,3)]
     function find_weight(edge, edge_df)
         if edge[1] < edge[2]
-            return edge_df[(edge_df[:in].==edge[1]) .& (edge_df[:out].==edge[2]),:weight]
+            return edge_df[(edge_df[:in].==edge[1]) .& (edge_df[:out].==edge[2]),:weight][1]
         elseif edge[1] > edge[2]
-            return edge_df[(edge_df[:in].==edge[2]) .& (edge_df[:out].==edge[1]),:weight]
+            return edge_df[(edge_df[:in].==edge[2]) .& (edge_df[:out].==edge[1]),:weight][1]
         else
             println("ERROR")
         end
     end
-    incident_edge_list = out_edges(tree,vertex)
+    incident_edge_list = outneighbors(tree,vertex)
     println(incident_edge_list)
     for out_vertex in incident_edge_list
         for row=1:size(edges,1)
-            println((edges[row,:in],edges[row,:out]))
-            if !(has_edge(tree,(edges[row,:in],edges[row,:out]))) & indegree(tree, out_vertex) >= 2
-                println(find_weight((1,6),edges))
-                swap_value = edges[row,:weight] - find_weight((vertex,out_vertex), edges)[1]
-                println(swap_value)
+            if (!(has_edge(tree,(edges[row,:in],edges[row,:out])))) & (indegree(tree, out_vertex) >= 2)
+                swap_value = edges[row,:weight] - find_weight((vertex,out_vertex), edges)
+                println(find_weight((vertex,out_vertex), edges))
                 if swap_value < best_swap_value
                     best_swap_value = swap_value
                     best_swap = [(vertex, out_vertex), (edges[row,:in],edges[row,:out])]
@@ -234,21 +239,115 @@ function swap_edges_remove(vertex, tree, edges)
     end
     println(best_swap)
     println(best_swap_value)
+    rem_edge!(tree, best_swap[1][1], best_swap[1][2])
+    add_edge!(tree, best_swap[2])
 
     return tree
 
 end
 
-# while indegree(tree,1) != 3
-#     if indegree(tree, 1) > 3
-#         # Find biggest weight edge leaving 1
-#         temp = sort(edges_df[((edges_df[:in].==1) .| (edges_df[:out].==1)),:],:weight)
-#     elseif indegree(tree,1) < 3
-#         temp = sort(edges_df[((edges_df[:in].==1) .| (edges_df[:out].==1)),:],:weight)
+function swap_edges_add(vertex, tree, edges)
+    # First find the best two edges to swap
+    best_swap_value = Inf
+    best_swap = [(1,2),(2,3)]
+    function find_weight(edge, edge_df)
+        if edge[1] < edge[2]
+            return edge_df[(edge_df[:in].==edge[1]) .& (edge_df[:out].==edge[2]),:weight][1]
+        elseif edge[1] > edge[2]
+            return edge_df[(edge_df[:in].==edge[2]) .& (edge_df[:out].==edge[1]),:weight][1]
+        else
+            println("ERROR")
+        end
+    end
+
+    incident_edge_list = map((x,y) -> x==vertex ? y : x, edges[:in],edges[:out])
+    incident_edge_list = symdiff(incident_edge_list,outneighbors(tree,vertex))
+    println(incident_edge_list)
+    for in_vertex in incident_edge_list
+        for row=1:size(edges,1)
+            if has_edge(tree,(edges[row,:in],edges[row,:out]))
+                swap_value = edges[row,:weight] - find_weight((vertex,in_vertex), edges)
+                println(find_weight((vertex,in_vertex), edges))
+                if swap_value < best_swap_value
+                    # Create a temp graph to test connectedness
+                    temp_tree = copy(tree)
+                    add_edge!(temp_tree, vertex, in_vertex)
+                    set_prop!(temp_tree, vertex, in_vertex, :weight, find_weight((vertex,in_vertex),edges))
+                    rem_edge!(temp_tree, edges[row,:in], edges[row,:out])
+                    if temp_tree |> is_connected
+                        best_swap_value = swap_value
+                        best_swap = [(vertex, in_vertex), (edges[row,:in],edges[row,:out])]
+                    end
+                end
+            end
+        end
+    end
+    println(best_swap)
+    println(best_swap_value)
+    add_edge!(tree, best_swap[1])
+    set_prop!(tree, best_swap[1][1], best_swap[1][2], :weight, find_weight(best_swap[1], edges))
+    rem_edge!(tree, best_swap[2][1], best_swap[2][2])
+
+    return tree
+
+end
+iter = 1
+while indegree(tree,1) != 3
+    if indegree(tree, 1) > 3
+        swap_edges_remove(1,tree, edges_df)
+    elseif indegree(tree,1) < 3
+        swap_edges_add(1,tree, edges_df)
+    end
+    if iter > 100
+        break
+    end
+end
+
+feasible_edges = []
+feasible_vertices = Set()
+for edge in tree |> edges
+    if (edge.src!=n+1 & edge.dst!=n+1)
+        push!(feasible_edges,edge)
+        push!(feasible_vertices, edge.src, edge.dst)
+    end
+end
+
+new_column = soln(feasible_edges, feasible_vertices)
+function append_new_col!(new_column)
+    columns[τ] = new_column
+    # Get objective value of new column
+    cost = 0
+    for v in new_column.vertex
+        cost -= positions[:weight][v]
+    end
+    for edge in new_column.edge
+        cost =+ distances[edge[1],edge[2]]
+    end
+
+    # Get value for constraint (10a)
+    value = OffsetArray{Float64}(3:n)
+    for k=3:n
+        value[k] = sum(new_column.edge[i,j] for i=1:n, j=1:n if (i<j && (i==k || j==k))) - 2* new_column.vertex[k]
+    end
+
+    # Get value for constraint (10b)
+#     weight_value = sum(positions[:weight][vertex] * new_column.vertex[vertex] for vertex=2:n) - max_weight
 #
+#     # Add the new column
+#     # Make the coefficients an array
+#     coeff_array = []
+#     for i in [value, weight_value]
+#         append!(coeff_array,i)
 #     end
+#     # @variable(rmp_τ, 0 <= λ_new <= Inf, objective = cost, inconstraints = constraint_refs, coefficients = convert(Array{Float64,1},coeff_array))
+#     if !(isdefined(:convexity_constraint))
+#         @constraint(rmp_τ, convexity_constraint, 0 == 1)
+#         push!(constraint_refs, convexity_constraint)
+#     end
+#     @variable(rmp_τ, 0 <= λ_new <= Inf, objective = cost, inconstraints = constraint_refs, coefficients = convert(Array{Float64,1}, [coeff_array;1]))
+#     setname(λ_new,string("λ[",τ,"]"))
 # end
-#
+
 # min_weight = Inf
 # local min_edge
 # for i=1:n+1
