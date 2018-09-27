@@ -17,9 +17,11 @@ elseif !isdefined(:n)
     global n = 10
 end
 
-max_weight = Int(round(n/2))
+max_weight = 10
 
 positions = CSV.read("./data/positions_"*string(n)*".csv")
+positions[:weight] = ones(n)
+positions[:profit] = positions[:profit]*3
 
 function get_distance(coord)
     n = size(coord)[1]

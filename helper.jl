@@ -137,14 +137,15 @@ function partition_edges(edge_solution::JuMP.JuMPDict{JuMP.Variable,2})
 end
 
 function partition_edges(edge_solution)
+    len = length(edge_solution)
     list_of_edges = []
-    for i=1:n, j=i+1:n
+    for i=1:len, j=i+1:len
         # if(edge_solution[i,j])==1
         if abs(edge_solution[i,j]-1) < 0.000001
             push!(list_of_edges,(i,j))
         end
     end
-    tours = Array{Array{Tuple{Int64, Int64},1}}(n)
+    tours = Array{Array{Tuple{Int64, Int64},1}}(len)
 
     function test_if_edge_in_set(vertex_set, edge)
         if edge[1] in vertex_set || edge[2] in vertex_set
@@ -173,6 +174,7 @@ function partition_edges(edge_solution)
             tours[num_tours] = Dict("edges" => [edge], "set" => Set(edge))
         end
     end
+    println("hey")
     return tours
 end
 
@@ -181,14 +183,17 @@ function partition_edges(edge_solution::JuMP.JuMPDict{JuMP.Variable,2})
 end
 
 function partition_edges(edge_solution)
+    # len = length(edge_solution)
+    # println(edge_solution.tupledict.keys |> maximum)
+    # println(edge_solution.tupledict |> fieldnames)
     list_of_edges = []
-    for i=1:n, j=i+1:n
+    for i=1:len, j=i+1:len
         # if(edge_solution[i,j])==1
         if abs(edge_solution[i,j]-1) < 0.000001
             push!(list_of_edges,(i,j))
         end
     end
-    tours = Array{Array{Tuple{Int64, Int64},1}}(n)
+    tours = Array{Array{Tuple{Int64, Int64},1}}(len)
 
     function test_if_edge_in_set(vertex_set, edge)
         if edge[1] in vertex_set || edge[2] in vertex_set
@@ -247,7 +252,7 @@ function is_valid_solution(edge_solution::JuMP.JuMPDict{JuMP.Variable,2})
 end
 
 function is_valid_solution(edge_solution)
-    subtours_dict = edge |> partition_edges |> consolidate_sets
+    subtours_dict = edge_solution |> partition_edges |> consolidate_sets
     subtours = Array{Array{Int64,1},1}(length(subtours_dict))
     for (index, key) in enumerate(keys(subtours_dict))
         subtours[index] = create_tour(subtours_dict[key]["edges"])

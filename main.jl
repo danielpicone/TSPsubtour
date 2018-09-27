@@ -18,10 +18,11 @@ elseif !isdefined(:n)
     global n = 10
 end
 
-# max_weight = 7
-max_weight = Int(round(n/2))
+max_weight = 5
+# max_weight = Int(round(n/2))
 
 positions = CSV.read("./data/positions_"*string(n)*".csv")
+
 
 function get_distance(coord)
     n = size(coord)[1]
@@ -38,6 +39,17 @@ end
 # end
 
 distances = get_distance(positions)
+
+# if n ==5
+#     distances = [0 3 5 7 8;
+#                  3 0 6 6 3;
+#                  5 6 0 3 5;
+#                  7 6 3 0 2;
+#                  8 3 5 2 0]
+#     max_weight = 2
+#     positions[:profit] = [0,12,8,8,3]
+#     positions[:weight] = [0,1,1,1,1]
+# end
 
 tspst = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 1, CPXPARAM_MIP_Display = 2))
 
