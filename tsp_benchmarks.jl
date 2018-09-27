@@ -1,4 +1,4 @@
-# This file matches all data and creates the relevant dataframe
+# This file creates the benchmarks scenarios
 
 using CSV
 using DataFrames
@@ -149,17 +149,23 @@ function solve_tsp(n, v)
     return getobjectivevalue(tsp), solution_path
 end
 
-df = DataFrame(num = Int64[], v = Int64[], value = Float64[], solution_path = Array[])
-for k=10:5:100
+df = DataFrame(num = Int64[], v = Int64[], value = Float64[], solution_path = Array[], time = Float64[])
+for k=10:5:200
     println("Up to number: ",k)
+    avg_time = []
     for v=1:10
+        start_time = time()
         value, path = solve_tsp(k, v)
+        end_time = time()
+        time_taken = end_time - start_time
         # df[:n] = k
         # df[:version] = v
         # df[:solution_value] = value
         # df[:solution_path] = [path]
-        push!(df, [k, v, value, path])
+        push!(df, [k, v, value, path, time_taken])
+        push!(avg_time, time_taken)
     end
+    println(mean(avg_time))
 end
 
 CSV.write("./data/solutions.csv", df)
