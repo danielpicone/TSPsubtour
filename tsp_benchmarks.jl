@@ -1,4 +1,4 @@
-# This file matches all data and creates the relevant dataframe
+# This file creates the benchmarks scenarios
 
 using CSV
 using DataFrames
@@ -26,6 +26,9 @@ function get_distance(coord)
         D[i,j] = sqrt((coord[i,2]-coord[j,2])^2 + (coord[i,3] - coord[j,3])^2)
     end
     return (D+D')
+end
+
+for n in 150:50:1000
 end
 
 function get_subtour(edge_solution)
@@ -62,51 +65,6 @@ function get_subtour(edge_solution)
     return tour[1:end-1]
 end
 
-# function add_gsec_tsp!(subtour)
-#     # println(subtour)
-#     for k in subtour
-#         @constraint(tsp, sum(edge[i,j] for i in subtour,j in subtour if i < j) <= length(subtour)-1)
-#     end
-# end
-# distances = get_distance(positions)
-#
-# tsp = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 1, CPXPARAM_MIP_Display = 2))
-#
-# # Add edge variables
-# @variable(tsp, edge[i=1:n,j=i+1:n], Bin)
-#
-# @objective(tsp, Min, sum(distances[i,j]*edge[i,j] for i=1:n, j=i+1:n))
-#
-# # Vertex degree restrictions
-# for i=1:n
-#     @constraint(tsp, sum(edge[i,j] for j=i+1:n if i!=j) + sum(edge[j,i] for j=1:n if j<i) == 2)
-# end
-#
-# println("Solving the model now")
-# solve(tsp)
-#
-# # draw_layout_adj(get_adj_mat(edge), convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*"_late.svg")
-# # draw_layout_adj(x, convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*"_late.svg")
-#
-# # Determine if multiple subtours exist
-#
-# start_time = time()
-# while !is_valid_solution(edge)
-#     subtours = get_subtours(edge)
-#     if length(subtours)!=1
-#         for tour in subtours
-#             if !(1 in tour)
-#                 add_gsec_tsp!(tour)
-#             end
-#         end
-#     end
-#     solve(tsp)
-#     # println(MathProgBase.numlinconstr(tsp))
-# end
-# end_time = time()
-#
-# println("Time taken was: ", end_time - start_time, " seconds")
-# draw_layout_adj(get_adj_mat(edge), convert(Array{Float64},positions[:xcoord]), convert(Array{Float64},positions[:ycoord]), filename="./graphs/graph_"*string(n)*"_late_solved.svg")
 
 function solve_tsp(n, v)
     global len = n
@@ -149,22 +107,25 @@ function solve_tsp(n, v)
     return getobjectivevalue(tsp), solution_path
 end
 
-df = DataFrame(num = Int64[], v = Int64[], value = Float64[], solution_path = Array[])
-for k=10:5:100
+df = DataFrame(num = Int64[], v = Int64[], value = Float64[], solution_path = Array[], time = Float64[])
+for k=250:50:400
     println("Up to number: ",k)
     avg_time = []
     for v=1:10
+        positions = create_csv(k)
+        CSV.write("data/positions_"*string(k)*"_v"*string(v)*".csv", positions)
         start_time = time()
         value, path = solve_tsp(k, v)
         end_time = time()
+        time_taken = end_time - start_time
         # df[:n] = k
         # df[:version] = v
         # df[:solution_value] = value
         # df[:solution_path] = [path]
-        push!(avg_time, end_time-start_time)
-        push!(df, [k, v, value, path])
+        push!(df, [k, v, value, path, time_taken])
+        push!(avg_time, time_taken)
     end
     println(mean(avg_time))
 end
 
-# CSV.write("./data/solutions.csv", df)
+CSV.write("./data/solutions_205_400.csv", df)
