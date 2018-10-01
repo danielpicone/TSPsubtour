@@ -35,7 +35,7 @@ end
 # max_weight = Int(round(n/2))
 # solutions =  CSV.read("./data/solutions.csv")
 
-positions = CSV.read("./data/positions_"*string(n)*"_v1.csv")
+positions = CSV.read("./data/positions_"*string(n)*"_v2.csv")
 positions[:weight] = ones(n)
 positions[:profit] = positions[:profit]*3
 
@@ -70,7 +70,7 @@ end
 global τ = 1
 println("Create the RMP")
 α_tilde = zeros(n)
-ϵ_α = 50
+ϵ_α = 8
 
 # Get cost of inital tour
 initial_cost = sum(distances[i,i+1] for i=1:n-1) + distances[1,n]
@@ -105,29 +105,29 @@ function create_reduced_costs(rmp)
 end
 
 function find_one_tree(d_hat, distances; num_trees = 1)
-    graph = MetaGraph(n-1)
-    for i=1:n-1, j=i+1:n-1
+    graph = MetaGraph(n)
+    for i=2:n, j=i+1:n
         add_edge!(graph, i, j)
-        set_prop!(graph, i, j, :weight, d_hat[i+1,j+1])
+        set_prop!(graph, i, j, :weight, d_hat[i,j])
     end
     tree = kruskal_mst(graph)
     num_v = zeros(n)
     num_v[1] = 2
     # Find number of vertices
     for edge in tree
-        num_v[edge.src+1] += 1
-        num_v[edge.dst+1] += 1
+        num_v[edge.src] += 1
+        num_v[edge.dst] += 1
     end
 
     cost = 0
     reduced_cost = 0
     for edge in tree
         if edge.src < edge.dst
-            cost += distances[edge.src+1,edge.dst+1]
-            reduced_cost += d_hat[edge.src+1,edge.dst+1]
+            cost += distances[edge.src,edge.dst]
+            reduced_cost += d_hat[edge.src,edge.dst]
         elseif edge.src > edge.dst
-            cost += distances[edge.dst+1,edge.src+1]
-            reduced_cost += d_hat[edge.dst+1,edge.src+1]
+            cost += distances[edge.dst,edge.src]
+            reduced_cost += d_hat[edge.dst,edge.src]
         else
             println("ERROR")
         end
@@ -135,54 +135,51 @@ function find_one_tree(d_hat, distances; num_trees = 1)
     new_edges = [d_hat[1,2:end] collect(2:n)]'
     new_edges = sortcols(new_edges)
     new_dual = getdual(vertex_constraints)
-    # ind1, ind2 = new_edges[2,1:2]
     inds = Int64.(new_edges[2,:])
-    # cost += distances[1,Int64(ind1)] + distances[1,Int64(ind2)]
     tree_cost = []
     num_v_array = []
     reduced_cost = []
+    tree_array = []
     for i=1:num_trees
         temp_cost = cost + distances[1,inds[1]] + distances[1,inds[i+1]]
         temp_num_v = copy(num_v)
         temp_num_v[inds[1]] += 1
         temp_num_v[inds[i+1]] += 1
+        temp_tree = copy(tree)
+        push!(temp_tree, LightGraphs.SimpleGraphs.SimpleEdge{Int64}(1, inds[1]))
+        push!(temp_tree, LightGraphs.SimpleGraphs.SimpleEdge{Int64}(1, inds[i+1]))
+        push!(tree_array, temp_tree)
         temp_reduced_cost = temp_cost- sum(temp_num_v[j]*new_dual[j] for j=1:n)
         if temp_reduced_cost > 0
-            println("this occurs")
+            println("Reduced cost of a new column was positive. This was not added")
+            return tree_cost, push!(reduced_cost, temp_reduced_cost), tree_array, num_v_array
             break
         end
         push!(tree_cost, temp_cost)
         push!(num_v_array, temp_num_v)
-        # push!(num_v_array, copy(num_v))
-        # println(tree_cost[i])
-        # num_v_array[i][inds[1]] += 1
-        # num_v_array[i][inds[i+1]] += 1
         push!(reduced_cost, temp_reduced_cost)
     end
-    # println("Current cost is: ", cost)
-    # println("Cost vector is: ", new_edges)
 
-
-    return tree_cost, reduced_cost, tree, num_v_array
+    return tree_cost, reduced_cost, tree_array, num_v_array
     # return cost, reduced_cost, tree, num_v
 end
 
 function append_new_col!(rmp_τ)
     d_hat = create_reduced_costs(rmp_τ)
     # show(STDOUT,"text/plain", d_hat)
-    # println()
-    # new_cost, reduced_cost, tree, num_v = find_one_tree(d_hat, distances)
     num_new_cols = 1
-    new_costs, reduced_cost, tree, num_v_array = find_one_tree(d_hat, distances; num_trees = num_new_cols)
-    # new_cost = find_cost(tree, d_hat, distances)
-    # @variable(rmp_τ, 0 <= λ_new <= Inf, objective = new_cost, inconstraints = vertex_constraints, coefficients = num_v)
-    # for i=1:num_new_cols
-    for (index, new_col_cost) in enumerate(new_costs)
-        @variable(rmp_τ, 0 <= λ_new <= Inf, objective = new_col_cost, inconstraints = vertex_constraints, coefficients = num_v_array[index])
-        setname(λ_new,string("λ[",τ,"]"))
+    new_costs, reduced_cost, tree_array, num_v_array = find_one_tree(d_hat, distances; num_trees = num_new_cols)
+    if length(num_v_array) >= 1
+        if all(num_v_array[1].==2)
+            println("An integral solution was found with cost: ", new_costs[1])
+        end
+        for (index, new_col_cost) in enumerate(new_costs)
+            @variable(rmp_τ, 0 <= λ_new <= Inf, objective = new_col_cost, inconstraints = vertex_constraints, coefficients = num_v_array[index])
+            setname(λ_new,string("λ[",rmp_τ.numCols - 2*n,"]"))
+            append!(basic_array, 0)
+        end
     end
-    # return new_cost, reduced_cost, num_v, tree
-    return new_costs, reduced_cost, num_v_array, tree
+    return new_costs, reduced_cost, num_v_array, tree_array
 end
 
 function test_integrality(rmp)
@@ -198,15 +195,28 @@ end
 function in_box(dual, center, box)
     return dual < center-box ? center-box : (dual > center+box ? center+box : dual)
 end
+function get_variable_values(rmp_τ)
+    return Variable.(rmp_τ,2*n+1:rmp_τ.numCols) |> getvalue
+end
+function check_basic!(rmp_τ, basic_array)
+    for (index, solution_value) in enumerate(get_variable_values(rmp_τ))
+        if round(solution_value,10)==0
+            basic_array[index] += 1
+        else
+            basic_array[index] = 0
+        end
+    end
+    return basic_array
+end
+
 lower_bound = []
 upper_bound = []
 objective_array = []
 duals = []
+basic_array = []
+constraint_array = []
 println("Solving the CGP now")
 
-# d_hat = create_reduced_costs(rmp_τ)
-# tree, num_v = find_one_tree(d_hat)
-# new_cost = find_cost(tree, distances)
 flag = true
 start_time = time()
 v_ub = Inf
@@ -215,29 +225,49 @@ v_lb = -Inf
 gap = Inf
 ϵ = 0.0001
 temp = 0
+exclude_columns = false
+increase_exclude_bound = false
+num_since_basic = 1000
+
 # α_tilde = opt_α
 while gap > ϵ
     solve(rmp_τ)
+    if exclude_columns
+        check_basic!(rmp_τ, basic_array)
+        for var in Variable.(rmp_τ, 2*n+1:rmp_τ.numCols)[basic_array .> num_since_basic]
+            if increase_exclude_bound
+                if MathProgBase.getconstrmatrix(rmp_τ |> internalmodel)[:, var.col] in constraint_array
+                    num_since_basic += 5
+                end
+            end
+            setlowerbound(var, 0.0)
+            setupperbound(var, 0.0)
+        end
+    end
     append!(upper_bound, getobjectivevalue(rmp_τ))
     v_ub = getobjectivevalue(rmp_τ)
     new_dual = getdual(vertex_constraints)
     push!(duals, new_dual)
-    # if τ>2
-    #     println("Dual changed by: ", norm(duals[τ]-duals[τ-1]))
-    # end
     # println(norm(new_dual,1))
     # print_solution(rmp_τ)
-    new_costs, reduced_cost, num_v_array, tree = append_new_col!(rmp_τ)
+    new_costs, reduced_cost, num_v_array, tree_array = append_new_col!(rmp_τ)
     α_tilde = getdual(vertex_constraints)
     temp = copy(reduced_cost)
     # println(new_cost - sum(num_v[i]*new_dual[i] for i=1:n))
     # reduced_cost = new_costs[1] - sum(num_v_array[1][j]*new_dual[j] for j=1:n)
     # println("Last objective value was: ", getobjectivevalue(rmp_τ))
+    if reduced_cost[1] > 0
+        break
+    end
     append!(lower_bound, v_ub+reduced_cost[1])
+    push!(constraint_array, MathProgBase.getconstrmatrix(rmp_τ |> internalmodel)[:, rmp_τ.numCols])
     v_lb = max(v_lb,v_ub + reduced_cost[1])
-    println(gap)
+    # println("Gap is: ",gap)
     gap = (v_ub-v_lb)/v_lb
-    columns[τ] = tree
+    # columns[τ] = tree_array[1]
+    for (index,tree) in enumerate(tree_array)
+        columns[rmp_τ.numCols - 2*n] = (tree, new_costs[index])
+    end
     τ+=1
 end
 
