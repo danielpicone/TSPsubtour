@@ -152,14 +152,19 @@ end
 df = DataFrame(num = Int64[], v = Int64[], value = Float64[], solution_path = Array[])
 for k=10:5:100
     println("Up to number: ",k)
+    avg_time = []
     for v=1:10
+        start_time = time()
         value, path = solve_tsp(k, v)
+        end_time = time()
         # df[:n] = k
         # df[:version] = v
         # df[:solution_value] = value
         # df[:solution_path] = [path]
+        push!(avg_time, end_time-start_time)
         push!(df, [k, v, value, path])
     end
+    println(mean(avg_time))
 end
 
-CSV.write("./data/solutions.csv", df)
+# CSV.write("./data/solutions.csv", df)

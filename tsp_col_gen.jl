@@ -28,7 +28,7 @@ end
 
 # max_weight = Int(round(n/2))
 
-positions = CSV.read("./data/positions_"*string(n)*"_v1.csv")
+positions = CSV.read("./data/positions_"*string(n)*"_v2.csv")
 positions[:weight] = ones(n)
 positions[:profit] = positions[:profit]*3
 
@@ -229,7 +229,7 @@ while gap > ϵ
     # println("Last objective value was: ", getobjectivevalue(rmp_τ))
     append!(lower_bound, v_ub+reduced_cost[1])
     v_lb = max(v_lb,v_ub + reduced_cost[1])
-    println(gap)
+    # println(gap)
     gap = (v_ub-v_lb)/v_lb
     columns[τ] = tree
     τ+=1
@@ -241,7 +241,11 @@ push!(duals, new_dual)
 # append!(lower_bound, v_ub+reduced_cost[1])
 # append!(upper_bound, getobjectivevalue(rmp_τ))
 end_time = time()
-for var in Variable.(rmp_τ, 1:rmp_τ.numCols)
-    println(var, ": ", getvalue(var))
-end
+# for var in Variable.(rmp_τ, 1:rmp_τ.numCols)
+#     println(var, ": ", getvalue(var))
+# end
 println("Completed ",τ," iterations in: ", end_time - start_time, " seconds")
+relaxed_solution_vars = Variable.(rmp_τ,1:rmp_τ.numCols)[rmp_τ.colVal .!= 0]
+for sol in relaxed_solution_vars
+    println(sol, " has a value of ", getvalue(sol))
+end
