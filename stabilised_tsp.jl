@@ -26,13 +26,6 @@ elseif !isdefined(:n)
     global n = 10
 end
 
-# for n in 10:5:200
-#     for j=1:10
-#         positions = create_csv(n)
-#         CSV.write("data/positions_"*string(n)*"_v"*string(j)*".csv", positions)
-#     end
-# end
-# max_weight = Int(round(n/2))
 # solutions =  CSV.read("./data/solutions.csv")
 
 positions = CSV.read("./data/positions_"*string(n)*"_v2.csv")
@@ -70,7 +63,7 @@ end
 global τ = 1
 println("Create the RMP")
 α_tilde = zeros(n)
-ϵ_α = 8
+ϵ_α = 40
 
 # Get cost of inital tour
 initial_cost = sum(distances[i,i+1] for i=1:n-1) + distances[1,n]
@@ -86,17 +79,20 @@ rmp_τ = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 0, CPXPARAM_Pre
 
 # Add the objective function
 @objective(rmp_τ, Min, sum((α_tilde[i] + ϵ_α)*η_ub[i] - (α_tilde[i] - ϵ_α)*η_lb[i] for i=1:n))
-# @objective(rmp_τ, Min, sum(obj_array[i] * λ[i] for i=1:7))
+# @objective(rmp_τ, Min, sum((α_tilde[i] + ϵ_α)*η_ub[i] - (α_tilde[i] - ϵ_α)*η_lb[i] for i=1:n) + sum(obj_array[i] * λ[i] for i=1:7))
 
 @constraint(rmp_τ, vertex_constraints[i=1:n], η_ub[i] - η_lb[i] == 2)
-# @constraint(rmp_τ, vertex_constraints[i=1:n], sum(cons_mat[i,j]*λ[j] for j=1:7) == 2)
+# @constraint(rmp_τ, vertex_constraints[i=1:n], η_ub[i] - η_lb[i] + sum(cons_mat[i,j]*λ[j] for j=1:7) == 2)
+constraint_refs = Vector{ConstraintRef}(0)
+for i=1:n
+    push!(constraint_refs, vertex_constraints[i])
+end
 
 function create_reduced_costs(rmp)
-    α = getdual(vertex_constraints)
     d_hat = copy(convert(Array{Float64,2},distances))
     for i=1:n
         for j=i+1:n
-            d_hat[i,j] += -α[i] - α[j]
+            d_hat[i,j] += -new_dual[i] - new_dual[j]
             d_hat[j,i] = d_hat[i,j]
         end
     end
@@ -134,7 +130,6 @@ function find_one_tree(d_hat, distances; num_trees = 1)
     end
     new_edges = [d_hat[1,2:end] collect(2:n)]'
     new_edges = sortcols(new_edges)
-    new_dual = getdual(vertex_constraints)
     inds = Int64.(new_edges[2,:])
     tree_cost = []
     num_v_array = []
@@ -149,7 +144,7 @@ function find_one_tree(d_hat, distances; num_trees = 1)
         push!(temp_tree, LightGraphs.SimpleGraphs.SimpleEdge{Int64}(1, inds[1]))
         push!(temp_tree, LightGraphs.SimpleGraphs.SimpleEdge{Int64}(1, inds[i+1]))
         push!(tree_array, temp_tree)
-        temp_reduced_cost = temp_cost- sum(temp_num_v[j]*new_dual[j] for j=1:n)
+        temp_reduced_cost = temp_cost - sum(temp_num_v[j]*new_dual[j] for j=1:n) - γ
         if temp_reduced_cost > 0
             println("Reduced cost of a new column was positive. This was not added")
             return tree_cost, push!(reduced_cost, temp_reduced_cost), tree_array, num_v_array
@@ -169,12 +164,17 @@ function append_new_col!(rmp_τ)
     # show(STDOUT,"text/plain", d_hat)
     num_new_cols = 1
     new_costs, reduced_cost, tree_array, num_v_array = find_one_tree(d_hat, distances; num_trees = num_new_cols)
+    if τ==1
+        # global convexity_constraint = @constraint(rmp_τ, convexity_constraint, 0 == 1)
+        global convexity_constraint = @constraint(rmp_τ, 0 == 1)
+        push!(constraint_refs, convexity_constraint)
+    end
     if length(num_v_array) >= 1
         if all(num_v_array[1].==2)
             println("An integral solution was found with cost: ", new_costs[1])
         end
         for (index, new_col_cost) in enumerate(new_costs)
-            @variable(rmp_τ, 0 <= λ_new <= Inf, objective = new_col_cost, inconstraints = vertex_constraints, coefficients = num_v_array[index])
+            @variable(rmp_τ, 0 <= λ_new <= Inf, objective = new_col_cost, inconstraints = constraint_refs, coefficients = [num_v_array[index];1])
             setname(λ_new,string("λ[",rmp_τ.numCols - 2*n,"]"))
             append!(basic_array, 0)
         end
@@ -182,8 +182,21 @@ function append_new_col!(rmp_τ)
     return new_costs, reduced_cost, num_v_array, tree_array
 end
 
+function change_objective!(rmp_τ)
+    new_box = in_box.(new_dual, duals[τ], ϵ_α)
+    # global new_dual = new_box
+    existing_columns = getobjective(rmp_τ).aff
+    if length(existing_columns.vars[2*n+1:end]) >= 1
+        @objective(rmp_τ, Min, sum((new_box[j]+ϵ_α)*η_ub[j] - (new_box[j]-ϵ_α)*η_lb[j] for j=1:n)
+         + existing_columns.coeffs[end-τ:end]'*existing_columns.vars[end-τ:end])
+    else
+        @objective(rmp_τ, Min, sum((new_box[j]+ϵ_α)*η_ub[j] - (new_box[j]-ϵ_α)*η_lb[j] for j=1:n))
+    end
+    return new_box
+end
+
 function test_integrality(rmp)
-    return mapreduce(x -> abs(getvalue(x))<0.000000001 ? true : false, &, true, Variable.(rmp, 1:(2*n-2)))
+    return mapreduce(x -> abs(getvalue(x))<0.000000001 ? true : false, &, true, Variable.(rmp, 1:(2*n)))
 end
 function print_solution(rmp_τ)
     if round.(getvalue(λ),5)!=1
@@ -227,12 +240,25 @@ gap = Inf
 temp = 0
 exclude_columns = false
 increase_exclude_bound = false
-num_since_basic = 1000
+num_since_basic = 800
+push!(duals, α_tilde)
 
 # α_tilde = opt_α
 while gap > ϵ
+    # println(rmp_τ)
     solve(rmp_τ)
-    if exclude_columns
+    objective_value = getobjectivevalue(rmp_τ)
+    if test_integrality(rmp_τ)
+        v_ub = objective_value
+    end
+    append!(upper_bound, v_ub)
+    global new_dual = getdual(vertex_constraints)
+    if isdefined(:convexity_constraint)
+        global γ = getdual(convexity_constraint)
+    else
+        global γ = 0
+    end
+    if (exclude_columns & τ % 100 == 0)
         check_basic!(rmp_τ, basic_array)
         for var in Variable.(rmp_τ, 2*n+1:rmp_τ.numCols)[basic_array .> num_since_basic]
             if increase_exclude_bound
@@ -244,31 +270,36 @@ while gap > ϵ
             setupperbound(var, 0.0)
         end
     end
-    append!(upper_bound, getobjectivevalue(rmp_τ))
-    v_ub = getobjectivevalue(rmp_τ)
-    new_dual = getdual(vertex_constraints)
+    # println(getobjective(rmp_τ))
+    # TODO: fix up change_objective!, it is allowing duals to move too much
+    new_dual = change_objective!(rmp_τ)
+    # println("new_dual: ", new_dual)
     push!(duals, new_dual)
-    # println(norm(new_dual,1))
-    # print_solution(rmp_τ)
     new_costs, reduced_cost, num_v_array, tree_array = append_new_col!(rmp_τ)
-    α_tilde = getdual(vertex_constraints)
     temp = copy(reduced_cost)
     # println(new_cost - sum(num_v[i]*new_dual[i] for i=1:n))
     # reduced_cost = new_costs[1] - sum(num_v_array[1][j]*new_dual[j] for j=1:n)
     # println("Last objective value was: ", getobjectivevalue(rmp_τ))
-    if reduced_cost[1] > 0
-        break
-    end
-    append!(lower_bound, v_ub+reduced_cost[1])
+    # println(γ)
+    # if reduced_cost[1] - γ >= 0
+    #     break
+    # end
+    append!(lower_bound, objective_value+reduced_cost[1])
     push!(constraint_array, MathProgBase.getconstrmatrix(rmp_τ |> internalmodel)[:, rmp_τ.numCols])
-    v_lb = max(v_lb,v_ub + reduced_cost[1])
-    # println("Gap is: ",gap)
-    gap = (v_ub-v_lb)/v_lb
-    # columns[τ] = tree_array[1]
+    if τ>1
+        v_lb = max(v_lb, objective_value + reduced_cost[1])
+        gap = (v_ub-v_lb)/abs(v_lb)
+    end
+    println("Gap is: ",gap)
     for (index,tree) in enumerate(tree_array)
         columns[rmp_τ.numCols - 2*n] = (tree, new_costs[index])
     end
+    # println(τ)
     τ+=1
+    # if τ>50
+    #     break
+    # end
+    # gap = 1
 end
 
 solve(rmp_τ)
@@ -281,7 +312,7 @@ end_time = time()
 #     println(var, ": ", getvalue(var))
 # end
 println("Completed ",τ," iterations in: ", end_time - start_time, " seconds")
-relaxed_solution_vars = Variable.(rmp_τ,1:rmp_τ.numCols)[rmp_τ.colVal .!= 0]
+relaxed_solution_vars = Variable.(rmp_τ,1:rmp_τ.numCols)[abs.(rmp_τ.colVal) .> 1e-10]
 for sol in relaxed_solution_vars
     println(sol, " has a value of ", getvalue(sol))
 end
