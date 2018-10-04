@@ -63,7 +63,7 @@ end
 global τ = 1
 println("Create the RMP")
 α_tilde = zeros(n)
-ϵ_α = 1000
+ϵ_α = 40
 
 # Get cost of inital tour
 initial_cost = sum(distances[i,i+1] for i=1:n-1) + distances[1,n]
@@ -145,7 +145,6 @@ function find_one_tree(d_hat, distances; num_trees = 1)
         push!(temp_tree, LightGraphs.SimpleGraphs.SimpleEdge{Int64}(1, inds[i+1]))
         push!(tree_array, temp_tree)
         temp_reduced_cost = temp_cost - sum(temp_num_v[j]*new_dual[j] for j=1:n) - γ
-        # println(temp_reduced_cost)
         if temp_reduced_cost > 0
             println("Reduced cost of a new column was positive. This was not added")
             return tree_cost, push!(reduced_cost, temp_reduced_cost), tree_array, num_v_array
@@ -184,15 +183,16 @@ function append_new_col!(rmp_τ)
 end
 
 function change_objective!(rmp_τ)
-    println(new_dual)
+    new_box = in_box.(new_dual, duals[τ], ϵ_α)
+    # global new_dual = new_box
     existing_columns = getobjective(rmp_τ).aff
     if length(existing_columns.vars[2*n+1:end]) >= 1
-        @objective(rmp_τ, Min, sum((new_dual[i] + ϵ_α)*η_ub[i] - (new_dual[i] - ϵ_α)*η_lb[i] for i=1:n)
-         + existing_columns.coeffs[2*n+1:end]'*existing_columns.vars[2*n+1:end])
+        @objective(rmp_τ, Min, sum((new_box[j]+ϵ_α)*η_ub[j] - (new_box[j]-ϵ_α)*η_lb[j] for j=1:n)
+         + existing_columns.coeffs[end-τ:end]'*existing_columns.vars[end-τ:end])
     else
-        @objective(rmp_τ, Min, sum((new_dual[i] + ϵ_α)*η_ub[i] - (new_dual[i] - ϵ_α)*η_lb[i] for i=1:n))
+        @objective(rmp_τ, Min, sum((new_box[j]+ϵ_α)*η_ub[j] - (new_box[j]-ϵ_α)*η_lb[j] for j=1:n))
     end
-    return rmp_τ
+    return new_box
 end
 
 function test_integrality(rmp)
@@ -240,26 +240,25 @@ gap = Inf
 temp = 0
 exclude_columns = false
 increase_exclude_bound = false
-num_since_basic = 1000
+num_since_basic = 800
+push!(duals, α_tilde)
 
 # α_tilde = opt_α
 while gap > ϵ
+    # println(rmp_τ)
     solve(rmp_τ)
     objective_value = getobjectivevalue(rmp_τ)
-    # println(test_integrality(rmp_τ))
-    # println(getobjective(rmp_τ))
     if test_integrality(rmp_τ)
         v_ub = objective_value
     end
     append!(upper_bound, v_ub)
     global new_dual = getdual(vertex_constraints)
-    push!(duals, new_dual)
     if isdefined(:convexity_constraint)
         global γ = getdual(convexity_constraint)
     else
         global γ = 0
     end
-    if exclude_columns
+    if (exclude_columns & τ % 100 == 0)
         check_basic!(rmp_τ, basic_array)
         for var in Variable.(rmp_τ, 2*n+1:rmp_τ.numCols)[basic_array .> num_since_basic]
             if increase_exclude_bound
@@ -272,7 +271,10 @@ while gap > ϵ
         end
     end
     # println(getobjective(rmp_τ))
-    change_objective!(rmp_τ)
+    # TODO: fix up change_objective!, it is allowing duals to move too much
+    new_dual = change_objective!(rmp_τ)
+    # println("new_dual: ", new_dual)
+    push!(duals, new_dual)
     new_costs, reduced_cost, num_v_array, tree_array = append_new_col!(rmp_τ)
     temp = copy(reduced_cost)
     # println(new_cost - sum(num_v[i]*new_dual[i] for i=1:n))
@@ -284,17 +286,19 @@ while gap > ϵ
     # end
     append!(lower_bound, objective_value+reduced_cost[1])
     push!(constraint_array, MathProgBase.getconstrmatrix(rmp_τ |> internalmodel)[:, rmp_τ.numCols])
-    v_lb = max(v_lb, objective_value + reduced_cost[1])
+    if τ>1
+        v_lb = max(v_lb, objective_value + reduced_cost[1])
+        gap = (v_ub-v_lb)/abs(v_lb)
+    end
     println("Gap is: ",gap)
-    gap = (v_ub-v_lb)/v_lb
     for (index,tree) in enumerate(tree_array)
         columns[rmp_τ.numCols - 2*n] = (tree, new_costs[index])
     end
-    println(τ)
+    # println(τ)
     τ+=1
-    if τ>23
-        break
-    end
+    # if τ>50
+    #     break
+    # end
     # gap = 1
 end
 

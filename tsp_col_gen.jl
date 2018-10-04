@@ -229,7 +229,7 @@ while gap > ϵ
     # println("Last objective value was: ", getobjectivevalue(rmp_τ))
     append!(lower_bound, v_ub+reduced_cost[1])
     v_lb = max(v_lb,v_ub + reduced_cost[1])
-    # println(gap)
+    println(gap)
     gap = (v_ub-v_lb)/v_lb
     columns[τ] = tree
     τ+=1
