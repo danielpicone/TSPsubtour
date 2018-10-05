@@ -14,6 +14,8 @@ using GLPKMathProgInterface
 
 include("helper.jl")
 
+convexity_constraint = nothing
+
 struct soln
     edge
     vertex
@@ -42,6 +44,27 @@ function get_distance(coord)
     return (D+D')
 end
 
+function greedy_shortest_path(D,start_node)
+    current_node = start_node
+    cities_visited = Set(start_node)
+    path = [start_node]
+    cost = 0
+    for i=2:n
+        new_cities = sortcols([D[current_node,:]'; collect(1:n)'])
+        j = 2
+        while (new_cities[2,j] in path)
+            j += 1
+        end
+        push!(path,new_cities[2,j])
+        cost += new_cities[1,j]
+        current_node = Int64(new_cities[2,j])
+    end
+    cost += D[path[1],path[end]]
+
+    return path, cost
+
+end
+
 distances = get_distance(positions)
 
 if n==5
@@ -63,13 +86,13 @@ end
 global τ = 1
 println("Create the RMP")
 α_tilde = zeros(n)
-ϵ_α = 40
+ϵ_α = 400
 
 # Get cost of inital tour
 initial_cost = sum(distances[i,i+1] for i=1:n-1) + distances[1,n]
 columns = Dict()
 
-rmp_τ = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 0, CPXPARAM_Preprocessing_Dual=-1, CPXPARAM_MIP_Display = 3))
+rmp_τ = JuMP.Model(solver = CplexSolver(CPXPARAM_ScreenOutput = 0, CPXPARAM_Preprocessing_Dual=-1, CPXPARAM_MIP_Display = 2))
 # rmp_τ = Model(solver = GLPKSolverLP(method=:Exact,msg_lev=3))
 
 # @variable(rmp_τ, λ >= 0)
@@ -147,7 +170,7 @@ function find_one_tree(d_hat, distances; num_trees = 1)
         temp_reduced_cost = temp_cost - sum(temp_num_v[j]*new_dual[j] for j=1:n) - γ
         if temp_reduced_cost > 0
             println("Reduced cost of a new column was positive. This was not added")
-            return tree_cost, push!(reduced_cost, temp_reduced_cost), tree_array, num_v_array
+            return tree_cost, reduced_cost, tree_array, num_v_array
             break
         end
         push!(tree_cost, temp_cost)
@@ -156,39 +179,34 @@ function find_one_tree(d_hat, distances; num_trees = 1)
     end
 
     return tree_cost, reduced_cost, tree_array, num_v_array
-    # return cost, reduced_cost, tree, num_v
 end
 
-function append_new_col!(rmp_τ)
+function append_new_col!(rmp_τ; objective_coefficient = nothing, constraint_coefficients = nothing)
     d_hat = create_reduced_costs(rmp_τ)
     # show(STDOUT,"text/plain", d_hat)
-    num_new_cols = 1
-    new_costs, reduced_cost, tree_array, num_v_array = find_one_tree(d_hat, distances; num_trees = num_new_cols)
-    if τ==1
-        # global convexity_constraint = @constraint(rmp_τ, convexity_constraint, 0 == 1)
+    if (objective_coefficient == nothing || constraint_coefficients == nothing)
+        objective_coefficient, reduced_cost, tree_array, constraint_coefficients = find_one_tree(d_hat, distances; num_trees = 1)
+    end
+
+    if convexity_constraint == nothing
         global convexity_constraint = @constraint(rmp_τ, 0 == 1)
         push!(constraint_refs, convexity_constraint)
     end
-    if length(num_v_array) >= 1
-        if all(num_v_array[1].==2)
-            println("An integral solution was found with cost: ", new_costs[1])
-        end
-        for (index, new_col_cost) in enumerate(new_costs)
-            @variable(rmp_τ, 0 <= λ_new <= Inf, objective = new_col_cost, inconstraints = constraint_refs, coefficients = [num_v_array[index];1])
-            setname(λ_new,string("λ[",rmp_τ.numCols - 2*n,"]"))
-            append!(basic_array, 0)
-        end
+    if all(constraint_coefficients.==2)
+        println("An integral solution was found with cost: ", objective_coefficient[1])
     end
-    return new_costs, reduced_cost, num_v_array, tree_array
+    @variable(rmp_τ, 0 <= λ_new <= Inf, objective = objective_coefficient, inconstraints = constraint_refs, coefficients = [constraint_coefficients;1])
+    setname(λ_new,string("λ[",rmp_τ.numCols - 2*n,"]"))
+    append!(basic_array, 0)
+    return objective_coefficient, constraint_coefficients
 end
 
-function change_objective!(rmp_τ)
-    new_box = in_box.(new_dual, duals[τ], ϵ_α)
-    # global new_dual = new_box
+function change_objective!(rmp_τ, new_box)
+    # new_box = in_box.(new_dual, duals[τ], ϵ_α)
     existing_columns = getobjective(rmp_τ).aff
     if length(existing_columns.vars[2*n+1:end]) >= 1
         @objective(rmp_τ, Min, sum((new_box[j]+ϵ_α)*η_ub[j] - (new_box[j]-ϵ_α)*η_lb[j] for j=1:n)
-         + existing_columns.coeffs[end-τ:end]'*existing_columns.vars[end-τ:end])
+         + existing_columns.coeffs[end-num_variables:end]'*existing_columns.vars[end-num_variables:end])
     else
         @objective(rmp_τ, Min, sum((new_box[j]+ϵ_α)*η_ub[j] - (new_box[j]-ϵ_α)*η_lb[j] for j=1:n))
     end
@@ -238,12 +256,22 @@ v_lb = -Inf
 gap = Inf
 ϵ = 0.0001
 temp = 0
-exclude_columns = false
+exclude_columns = true
 increase_exclude_bound = false
-num_since_basic = 800
+include_initial_columns = 20
+num_since_basic = 100
 push!(duals, α_tilde)
 
+global new_dual = α_tilde
+
 # α_tilde = opt_α
+global num_variables = 0
+for i=1:include_initial_columns
+    new_values = greedy_shortest_path(distances,i)
+    append_new_col!(rmp_τ, objective_coefficient = new_values[2], constraint_coefficients = 2*ones(n))
+    # println(rmp_τ)
+    num_variables += 1
+end
 while gap > ϵ
     # println(rmp_τ)
     solve(rmp_τ)
@@ -252,8 +280,8 @@ while gap > ϵ
         v_ub = objective_value
     end
     append!(upper_bound, v_ub)
-    global new_dual = getdual(vertex_constraints)
-    if isdefined(:convexity_constraint)
+    new_dual = getdual(vertex_constraints)
+    if convexity_constraint != nothing
         global γ = getdual(convexity_constraint)
     else
         global γ = 0
@@ -272,12 +300,20 @@ while gap > ϵ
     end
     # println(getobjective(rmp_τ))
     # TODO: fix up change_objective!, it is allowing duals to move too much
-    new_dual = change_objective!(rmp_τ)
+    # println("Upper bound: ",v_ub)
+    new_box = in_box.(new_dual, duals[τ], ϵ_α)
+    new_dual = change_objective!(rmp_τ, new_box)
     # println("new_dual: ", new_dual)
     push!(duals, new_dual)
-    new_costs, reduced_cost, num_v_array, tree_array = append_new_col!(rmp_τ)
+
+    d_hat = create_reduced_costs(rmp_τ)
+    new_objective_coefficients, reduced_cost, tree_array, new_constraint_coefficients = find_one_tree(d_hat, distances; num_trees = 1)
+    if !isempty(new_objective_coefficients)
+        for (index,new_obs) in enumerate(new_objective_coefficients)
+            objective_coefficient, constraint_coefficients  = append_new_col!(rmp_τ; objective_coefficient = new_obs, constraint_coefficients = new_constraint_coefficients[index])
+        end
+    end
     temp = copy(reduced_cost)
-    # println(new_cost - sum(num_v[i]*new_dual[i] for i=1:n))
     # reduced_cost = new_costs[1] - sum(num_v_array[1][j]*new_dual[j] for j=1:n)
     # println("Last objective value was: ", getobjectivevalue(rmp_τ))
     # println(γ)
@@ -292,10 +328,10 @@ while gap > ϵ
     end
     println("Gap is: ",gap)
     for (index,tree) in enumerate(tree_array)
-        columns[rmp_τ.numCols - 2*n] = (tree, new_costs[index])
+        columns[rmp_τ.numCols - 2*n] = (tree, new_objective_coefficients[index])
     end
     # println(τ)
-    τ+=1
+    τ+=1; num_variables += 1
     # if τ>50
     #     break
     # end
