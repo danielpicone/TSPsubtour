@@ -30,7 +30,7 @@ end
 
 # solutions =  CSV.read("./data/solutions.csv")
 
-positions = CSV.read("./data/positions_"*string(n)*"_v2.csv")
+positions = CSV.read("./data/positions_"*string(n)*"_v1.csv")
 positions[:weight] = ones(n)
 positions[:profit] = positions[:profit]*3
 
@@ -86,7 +86,9 @@ end
 global τ = 1
 println("Create the RMP")
 α_tilde = zeros(n)
-ϵ_α = 400
+ϵ_α = 100
+min_box_size = 10
+max_box_size = 100000
 
 # Get cost of inital tour
 initial_cost = sum(distances[i,i+1] for i=1:n-1) + distances[1,n]
@@ -202,7 +204,6 @@ function append_new_col!(rmp_τ; objective_coefficient = nothing, constraint_coe
 end
 
 function change_objective!(rmp_τ, new_box)
-    # new_box = in_box.(new_dual, duals[τ], ϵ_α)
     existing_columns = getobjective(rmp_τ).aff
     if length(existing_columns.vars[2*n+1:end]) >= 1
         @objective(rmp_τ, Min, sum((new_box[j]+ϵ_α)*η_ub[j] - (new_box[j]-ϵ_α)*η_lb[j] for j=1:n)
@@ -217,10 +218,14 @@ function test_integrality(rmp)
     return mapreduce(x -> abs(getvalue(x))<0.000000001 ? true : false, &, true, Variable.(rmp, 1:(2*n)))
 end
 function print_solution(rmp_τ)
-    if round.(getvalue(λ),5)!=1
-        for var in Variable.(rmp_τ, 1:rmp_τ.numCols)
-            println(var, ": ", getvalue(var))
-        end
+    # if round.(getvalue(λ),5)!=1
+    #     for var in Variable.(rmp_τ, 1:rmp_τ.numCols)
+    #         println(var, ": ", getvalue(var))
+    #     end
+    # end
+    relaxed_solution_vars = Variable.(rmp_τ,1:rmp_τ.numCols)[abs.(rmp_τ.colVal) .> 1e-10]
+    for sol in relaxed_solution_vars
+        println(sol, " has a value of ", getvalue(sol))
     end
 end
 function in_box(dual, center, box)
@@ -239,6 +244,18 @@ function check_basic!(rmp_τ, basic_array)
     end
     return basic_array
 end
+function change_box_size(box_size, num_times_changed)
+    if num_times_changed <= 1
+        box_size /= 2
+    elseif num_times_changed >= 8
+        box_size *= 2
+    end
+    return box_size
+end
+function change_box_size!(ϵ_α, num_times_changed)
+    ϵ_α = min(max(change_box_size(ϵ_α, num_times_changed), min_box_size), max_box_size)
+    return ϵ_α
+end
 
 lower_bound = []
 upper_bound = []
@@ -248,32 +265,35 @@ basic_array = []
 constraint_array = []
 println("Solving the CGP now")
 
-flag = true
-start_time = time()
+# Variables
+num_times_v_lb_changed = 0
 v_ub = Inf
 v_lb = -Inf
 # gap = (v_ub-v_lb)/v_lb
 gap = Inf
-ϵ = 0.0001
 temp = 0
-exclude_columns = true
+
+# Parameters
+ϵ = 0.0001
+exclude_columns = false
 increase_exclude_bound = false
-include_initial_columns = 20
+change_box_size_option = false
+include_initial_columns = 10
 num_since_basic = 100
 push!(duals, α_tilde)
+
 
 global new_dual = α_tilde
 
 # α_tilde = opt_α
 global num_variables = 0
+start_time = time()
 for i=1:include_initial_columns
     new_values = greedy_shortest_path(distances,i)
     append_new_col!(rmp_τ, objective_coefficient = new_values[2], constraint_coefficients = 2*ones(n))
-    # println(rmp_τ)
     num_variables += 1
 end
 while gap > ϵ
-    # println(rmp_τ)
     solve(rmp_τ)
     objective_value = getobjectivevalue(rmp_τ)
     if test_integrality(rmp_τ)
@@ -286,7 +306,7 @@ while gap > ϵ
     else
         global γ = 0
     end
-    if (exclude_columns & τ % 100 == 0)
+    if (exclude_columns & (τ % 100 == 0))
         check_basic!(rmp_τ, basic_array)
         for var in Variable.(rmp_τ, 2*n+1:rmp_τ.numCols)[basic_array .> num_since_basic]
             if increase_exclude_bound
@@ -298,12 +318,9 @@ while gap > ϵ
             setupperbound(var, 0.0)
         end
     end
-    # println(getobjective(rmp_τ))
     # TODO: fix up change_objective!, it is allowing duals to move too much
-    # println("Upper bound: ",v_ub)
     new_box = in_box.(new_dual, duals[τ], ϵ_α)
     new_dual = change_objective!(rmp_τ, new_box)
-    # println("new_dual: ", new_dual)
     push!(duals, new_dual)
 
     d_hat = create_reduced_costs(rmp_τ)
@@ -314,23 +331,26 @@ while gap > ϵ
         end
     end
     temp = copy(reduced_cost)
-    # reduced_cost = new_costs[1] - sum(num_v_array[1][j]*new_dual[j] for j=1:n)
-    # println("Last objective value was: ", getobjectivevalue(rmp_τ))
-    # println(γ)
-    # if reduced_cost[1] - γ >= 0
-    #     break
-    # end
-    append!(lower_bound, objective_value+reduced_cost[1])
+    if length(reduced_cost) == 0
+        break
+    end
+    # append!(lower_bound, objective_value+reduced_cost[1])
+    append!(lower_bound, v_lb)
     push!(constraint_array, MathProgBase.getconstrmatrix(rmp_τ |> internalmodel)[:, rmp_τ.numCols])
     if τ>1
         v_lb = max(v_lb, objective_value + reduced_cost[1])
         gap = (v_ub-v_lb)/abs(v_lb)
+    else
+        v_lb = objective_value + reduced_cost[1]
+    end
+    if ((τ > 100) & change_box_size_option)
+        num_times_v_lb_changed = lower_bound[end-9:end] |> unique |> length
+        ϵ_α = change_box_size!(ϵ_α, num_times_v_lb_changed)
     end
     println("Gap is: ",gap)
     for (index,tree) in enumerate(tree_array)
         columns[rmp_τ.numCols - 2*n] = (tree, new_objective_coefficients[index])
     end
-    # println(τ)
     τ+=1; num_variables += 1
     # if τ>50
     #     break
@@ -341,12 +361,7 @@ end
 solve(rmp_τ)
 new_dual = getdual(vertex_constraints)
 push!(duals, new_dual)
-# append!(lower_bound, v_ub+reduced_cost[1])
-# append!(upper_bound, getobjectivevalue(rmp_τ))
 end_time = time()
-# for var in Variable.(rmp_τ, 1:rmp_τ.numCols)
-#     println(var, ": ", getvalue(var))
-# end
 println("Completed ",τ," iterations in: ", end_time - start_time, " seconds")
 relaxed_solution_vars = Variable.(rmp_τ,1:rmp_τ.numCols)[abs.(rmp_τ.colVal) .> 1e-10]
 for sol in relaxed_solution_vars
