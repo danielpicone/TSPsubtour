@@ -194,9 +194,6 @@ function append_new_col!(rmp_τ; objective_coefficient = nothing, constraint_coe
         global convexity_constraint = @constraint(rmp_τ, 0 == 1)
         push!(constraint_refs, convexity_constraint)
     end
-    if all(constraint_coefficients.==2)
-        println("An integral solution was found with cost: ", objective_coefficient[1])
-    end
     @variable(rmp_τ, 0 <= λ_new <= Inf, objective = objective_coefficient, inconstraints = constraint_refs, coefficients = [constraint_coefficients;1])
     setname(λ_new,string("λ[",rmp_τ.numCols - 2*n,"]"))
     append!(basic_array, 0)
@@ -269,17 +266,18 @@ println("Solving the CGP now")
 num_times_v_lb_changed = 0
 v_ub = Inf
 v_lb = -Inf
-# gap = (v_ub-v_lb)/v_lb
 gap = Inf
+solved = false
 temp = 0
 
 # Parameters
-ϵ = 0.0001
+ϵ = 0.01
 exclude_columns = false
 increase_exclude_bound = false
 change_box_size_option = false
-include_initial_columns = 10
+include_initial_columns = 0
 num_since_basic = 100
+growth_rate = 1.001
 push!(duals, α_tilde)
 
 
@@ -293,7 +291,7 @@ for i=1:include_initial_columns
     append_new_col!(rmp_τ, objective_coefficient = new_values[2], constraint_coefficients = 2*ones(n))
     num_variables += 1
 end
-while gap > ϵ
+while ((gap > ϵ) & !solved)
     solve(rmp_τ)
     objective_value = getobjectivevalue(rmp_τ)
     if test_integrality(rmp_τ)
@@ -314,7 +312,13 @@ while gap > ϵ
                     num_since_basic += 5
                 end
             end
-            setlowerbound(var, 0.0)
+            println("THIS RUNS")
+            # setlowerbound(var, 0.0)
+            setupperbound(var, 0.0)
+        end
+    end
+    if τ == 100
+        for var in Variable.(rmp_τ, 2*n+1:2*n+1+include_initial_columns)
             setupperbound(var, 0.0)
         end
     end
@@ -328,6 +332,11 @@ while gap > ϵ
     if !isempty(new_objective_coefficients)
         for (index,new_obs) in enumerate(new_objective_coefficients)
             objective_coefficient, constraint_coefficients  = append_new_col!(rmp_τ; objective_coefficient = new_obs, constraint_coefficients = new_constraint_coefficients[index])
+            if all(constraint_coefficients.==2)
+                println("An integral solution was found with cost: ", objective_coefficient)
+                solved = true
+                break
+            end
         end
     end
     temp = copy(reduced_cost)
@@ -347,7 +356,7 @@ while gap > ϵ
         num_times_v_lb_changed = lower_bound[end-9:end] |> unique |> length
         ϵ_α = change_box_size!(ϵ_α, num_times_v_lb_changed)
     end
-    println("Gap is: ",gap)
+    println("At iteration ", τ, " gap is: ",gap)
     for (index,tree) in enumerate(tree_array)
         columns[rmp_τ.numCols - 2*n] = (tree, new_objective_coefficients[index])
     end
@@ -356,6 +365,7 @@ while gap > ϵ
     #     break
     # end
     # gap = 1
+    ϵ_α *= growth_rate
 end
 
 solve(rmp_τ)
@@ -367,3 +377,50 @@ relaxed_solution_vars = Variable.(rmp_τ,1:rmp_τ.numCols)[abs.(rmp_τ.colVal) .
 for sol in relaxed_solution_vars
     println(sol, " has a value of ", getvalue(sol))
 end
+
+function heuristic_solution(rmp_τ)
+    distance_edge_array = []
+    for i=1:n,j=i+1:n
+        push!(distance_edge_array, (Edge(i,j),distances[i,j]))
+    end
+    sort!(distance_edge_array, lt = (x,y) -> x[2] > y[2], rev = true)
+    relaxed_solution_vars = Variable.(rmp_τ,1:rmp_τ.numCols)[abs.(rmp_τ.colVal) .> 1e-10]
+    edge_set = Set()
+    for edges in relaxed_solution_vars
+        [push!(edge_set,edge) for edge in columns[linearindex(edges)-2*n][1]]
+    end
+    edge_array = []
+    for edge in edge_set
+        value = 0
+        for edges in relaxed_solution_vars
+            if edge in columns[linearindex(edges)-2*n][1]
+                value += edges |> getvalue
+            end
+        end
+        push!(edge_array, (edge,value))
+    end
+    sort!(edge_array, lt = (x,y) -> x[2] > y[2])
+    graph = MetaGraph(n)
+    index = 1
+    solution_cost = 0
+    while (!(all(length.(inneighbors.(graph,collect(1:n))).==2)) && index <= length(edge_array))
+        if (length(inneighbors(graph,edge_array[index][1].src))<2 && length(inneighbors(graph,edge_array[index][1].dst))<2)
+            add_edge!(graph, edge_array[index][1])
+            solution_cost += distances[edge_array[index][1].src, edge_array[index][1].dst]
+        end
+        index += 1
+    end
+    index = 1
+    if ne(graph) < n
+        while !(all(length.(inneighbors.(graph,collect(1:n))).==2))
+            if (length(inneighbors(graph,distance_edge_array[index][1].src))<2 && length(inneighbors(graph,distance_edge_array[index][1].dst))<2)
+                add_edge!(graph, distance_edge_array[index][1])
+                solution_cost += distance_edge_array[index][2]
+            end
+            index += 1
+        end
+    end
+    return edge_set, edge_array, graph, solution_cost
+end
+
+integer_solution = heuristic_solution(rmp_τ)
